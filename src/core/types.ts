@@ -83,6 +83,14 @@ export interface CardDef {
   exhaust?: boolean;
 }
 
+/** 캐릭터 필살기 — 증기압을 쓰지 않고, 몇 번의 전투마다 한 번 쓸 수 있다 */
+export interface SkillDef {
+  id: string;
+  name: string;
+  text: string;
+  effects: Effect[];
+}
+
 export interface CardInstance {
   uid: number;
   defId: string;
@@ -136,6 +144,7 @@ export type UnitRef = 'player' | number;
 /** 화면 연출용 기록 — 규칙에는 영향이 없고, UI가 읽은 뒤 비운다. */
 export type CombatEvent =
   | { kind: 'card'; cardId: string; attack: boolean; power: boolean; overclock: boolean; mesh: boolean; combo: number }
+  | { kind: 'skill'; skillId: string }
   | { kind: 'enemyMove'; enemy: number }
   | { kind: 'hit'; source: UnitRef; target: UnitRef; damage: number; blocked: number; hp: number; cardId?: string }
   | { kind: 'block'; target: UnitRef; amount: number }
@@ -169,4 +178,12 @@ export interface CombatState {
   events: CombatEvent[];
   outcome: 'ongoing' | 'won' | 'lost';
   nextCardUid: number;
+  /** 이 전투에서 쓸 수 있는 필살기 (없으면 null) */
+  skill: SkillDef | null;
+  /** 필살기를 지금 쓸 수 있는지 — 한 전투에 한 번 */
+  skillReady: boolean;
+  /** 이번 전투에서 필살기를 썼는지 (런의 충전 계산용) */
+  skillUsed: boolean;
+  /** 개발자 모드 무적 — 체력이 1 아래로 내려가지 않는다 */
+  god?: boolean;
 }

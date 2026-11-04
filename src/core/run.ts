@@ -20,6 +20,9 @@ export const ACT_MAX_HP_BONUS = 8;
 /** 분해로 덱을 이보다 작게 줄일 수는 없다 */
 export const MIN_DECK_SIZE = 5;
 
+/** 필살기를 쓰고 나면 이만큼의 전투를 지나야 다시 쓸 수 있다 */
+export const SKILL_RECHARGE = 3;
+
 /** 캐릭터에 어울리는 카드가 보상에 나올 가중치 (나머지는 1) */
 export const FAVORED_WEIGHT = 4;
 
@@ -39,6 +42,8 @@ export interface RunState {
   floors: Floor[];
   floor: number;
   nextCardUid: number;
+  /** 필살기 충전 — SKILL_RECHARGE이면 다음 전투에서 쓸 수 있다 */
+  skillCharge: number;
 }
 
 /** 구역마다 ACT_LAYOUT에 따라 적 무리를 뽑아 층을 만든다. 같은 무리가 연달아 나오지 않게 한다. */
@@ -78,6 +83,7 @@ export function createRun(seed: number, characterId = 'engineer'): RunState {
     floors: generateFloors(rng),
     floor: 0,
     nextCardUid: 1,
+    skillCharge: SKILL_RECHARGE,
   };
   for (const id of character.deck) addCard(run, id);
   return run;
@@ -105,11 +111,26 @@ export function addCard(run: RunState, defId: string): void {
 export function startFloorCombat(run: RunState): CombatState {
   const floor = currentFloor(run);
   if (floor.kind !== 'combat') throw new Error('전투 층이 아닙니다');
-  const { passive } = runCharacter(run);
+  return startCustomCombat(run, floor.enemies);
+}
+
+/** 층과 상관없이 정한 적들과 싸운다 (개발자 모드) */
+export function startCustomCombat(run: RunState, enemyIds: string[]): CombatState {
+  const { passive, skill } = runCharacter(run);
   return createCombat({
-    hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyIds: floor.enemies, rng: run.rng,
+    hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyIds, rng: run.rng,
     statuses: passive.statuses, maxHeat: passive.maxHeat,
+    skill, skillReady: run.skillCharge >= SKILL_RECHARGE,
   });
+}
+
+/**
+ * 전투가 끝나면 필살기 충전을 정산한다.
+ * 쓴 전투를 포함해 전투를 마칠 때마다 1씩 차므로, N번째 전투에서 쓰면 N+3번째 전투에서 다시 쓸 수 있다.
+ */
+export function settleSkill(run: RunState, combat: CombatState): void {
+  if (combat.skillUsed) run.skillCharge = 0;
+  run.skillCharge = Math.min(SKILL_RECHARGE, run.skillCharge + 1);
 }
 
 /**

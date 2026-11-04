@@ -1,17 +1,18 @@
 import 'galmuri/dist/galmuri.css';
 import './style.css';
-import { aliveEnemies, cardDef, endTurn, needsTarget, playCard } from './core/combat';
+import { aliveEnemies, cardDef, endTurn, needsTarget, playCard, useSkill } from './core/combat';
 import {
-  addCard, createRun, currentFloor, enterAct, removeCard, rest, rollCardRewards, startFloorCombat,
+  addCard, createRun, currentFloor, enterAct, removeCard, rest, rollCardRewards, settleSkill, startCustomCombat, startFloorCombat,
   type CombatTier, type RunState,
 } from './core/run';
-import type { CombatState, UnitRef } from './core/types';
+import type { CombatEvent, CombatState, UnitRef } from './core/types';
+import type { DevApi } from './dev/panel';
 import { playEvents, preloadFx, type UnitSnapshot } from './ui/effects';
 import {
   renderActStart, renderCombat, renderEnd, renderPileOverlay, renderRest, renderReward, renderSelect, renderTitle,
   type PileKind,
 } from './ui/render';
-import { playMusic, sfx, toggle, unlock, type MusicId } from './ui/sound';
+import { playMusic, setVolume, sfx, toggle, unlock, type MusicId } from './ui/sound';
 import { installCardFrames } from './ui/card-frame';
 import { installFrames } from './ui/sprites';
 import { hideTooltip, installTooltips } from './ui/tooltip';
@@ -30,6 +31,8 @@ const root = document.querySelector<HTMLDivElement>('#app')!;
 let run: RunState | null = null;
 let screen: Screen = { kind: 'title' };
 let selectedUid: number | null = null;
+/** 필살기 대상을 고르는 중 */
+let skillTargeting = false;
 /** 이벤트 연출 중에는 입력을 받지 않는다 */
 let busy = false;
 let dying = new Set<number>();
@@ -53,11 +56,16 @@ function screenMusic(): MusicId {
   return (['act0', 'act1', 'act2'] as const)[floor?.act ?? 0];
 }
 
+/** 개발자 패널이 걸어 두는 훅 — 행동 직후(치트 적용)와 화면을 그린 뒤(패널 갱신) */
+let devAfterAction: ((combat: CombatState) => void) | null = null;
+let devAfterRender: (() => void) | null = null;
+
 function render(): void {
   hideTooltip();
   renderScreen();
   if (overlay) root.insertAdjacentHTML('beforeend', renderPileOverlay(overlay, pileCards(overlay)));
   playMusic(screenMusic());
+  devAfterRender?.();
 }
 
 function renderScreen(): void {
@@ -69,7 +77,7 @@ function renderScreen(): void {
       root.innerHTML = renderSelect();
       return;
     case 'combat':
-      root.innerHTML = renderCombat(run!, screen.combat, selectedUid, dying, fresh);
+      root.innerHTML = renderCombat(run!, screen.combat, selectedUid, skillTargeting, dying, fresh);
       return;
     case 'reward':
       root.innerHTML = renderReward(run!, screen.options, screen.rerolled);
@@ -105,7 +113,9 @@ function nextFloor(): void {
 
 function afterCombatAction(combat: CombatState): void {
   if (combat.outcome === 'ongoing' || !run) return;
+  skillTargeting = false;
   run.hp = combat.player.hp;
+  settleSkill(run, combat);
   selectedUid = null;
   const floor = currentFloor(run);
   overlay = null;
@@ -128,6 +138,7 @@ function onCardClick(combat: CombatState, uid: number): void {
   if (!card) return;
   const def = cardDef(card);
   if (def.cost === null) return;
+  skillTargeting = false;
   if (needsTarget(def) && aliveEnemies(combat).length > 1) {
     selectedUid = selectedUid === uid ? null : uid;
     return;
@@ -160,8 +171,18 @@ function handle(action: string, data: DOMStringMap): void {
     case 'play':
       if (screen.kind === 'combat') onCardClick(screen.combat, Number(data.uid));
       break;
+    case 'skill': {
+      if (screen.kind !== 'combat' || !screen.combat.skillReady || !screen.combat.skill) return;
+      selectedUid = null;
+      if (needsTarget(screen.combat.skill) && aliveEnemies(screen.combat).length > 1) skillTargeting = !skillTargeting;
+      else useSkill(screen.combat);
+      break;
+    }
     case 'target':
-      if (screen.kind === 'combat' && selectedUid !== null) {
+      if (screen.kind === 'combat' && skillTargeting) {
+        skillTargeting = false;
+        useSkill(screen.combat, Number(data.uid));
+      } else if (screen.kind === 'combat' && selectedUid !== null) {
         playCard(screen.combat, selectedUid, Number(data.uid));
         selectedUid = null;
       }
@@ -169,6 +190,7 @@ function handle(action: string, data: DOMStringMap): void {
     case 'end-turn':
       if (screen.kind === 'combat') {
         selectedUid = null;
+        skillTargeting = false;
         endTurn(screen.combat);
       }
       break;
@@ -232,6 +254,7 @@ async function act(action: () => void): Promise<void> {
     return;
   }
   const combat = screen.combat;
+  devAfterAction?.(combat);
   const events = combat.events;
   combat.events = [];
   dying = new Set(combat.enemies.filter((e) => e.hp <= 0 && (before.get(e.uid)?.hp ?? 0) > 0).map((e) => e.uid));
@@ -267,7 +290,23 @@ root.addEventListener('click', (ev) => {
   void act(() => handle(el.dataset.action!, el.dataset));
 });
 
+// 음량 슬라이더 — 끌어도 화면을 다시 그리지 않고 소리만 바꾼다 (다시 그리면 드래그가 끊긴다)
+root.addEventListener('input', (ev) => {
+  const el = ev.target as HTMLInputElement;
+  const kind = el.dataset.volume as 'sfx' | 'music' | undefined;
+  if (!kind) return;
+  unlock();
+  setVolume(kind, Number(el.value) / 100);
+  el.parentElement?.querySelector('.sound-btn')?.classList.remove('off');
+});
+root.addEventListener('change', (ev) => {
+  // 효과음은 손을 뗄 때 한 번 들려줘서 크기를 가늠하게 한다
+  if ((ev.target as HTMLElement).dataset.volume === 'sfx') sfx('hit');
+});
+
 window.addEventListener('keydown', (ev) => {
+  // 개발자 패널 입력칸에 타이핑할 때는 단축키를 쓰지 않는다
+  if ((ev.target as HTMLElement).closest?.('input, select, textarea')) return;
   unlock();
   if (overlay && ev.key === 'Escape') {
     overlay = null;
@@ -276,13 +315,76 @@ window.addEventListener('keydown', (ev) => {
   }
   if (screen.kind !== 'combat' || overlay) return;
   if (ev.key === 'e' || ev.key === 'E') void act(() => handle('end-turn', {}));
-  else if (ev.key === 'Escape') void act(() => (selectedUid = null));
+  else if (ev.key === 'q' || ev.key === 'Q') void act(() => handle('skill', {}));
+  else if (ev.key === 'Escape') void act(() => { selectedUid = null; skillTargeting = false; });
 });
 
 installFrames();
 installCardFrames();
 preloadFx();
 installTooltips();
+
+// ── 개발자 모드 — 개발 서버이거나 주소에 ?dev가 있을 때만 ──
+if (import.meta.env.DEV || new URLSearchParams(location.search).has('dev')) {
+  const api: DevApi = {
+    run: () => run,
+    combat: () => (screen.kind === 'combat' ? screen.combat : null),
+    screenKind: () => screen.kind,
+    busy: () => busy,
+    newRun: (char, seed = Date.now() % 1_000_000) => {
+      run = createRun(seed, char);
+    },
+    startCombat: (enemyIds) => {
+      run ??= createRun(Date.now() % 1_000_000);
+      run.hp = Math.max(1, run.hp);
+      selectedUid = null;
+      skillTargeting = false;
+      overlay = null;
+      screen = { kind: 'combat', combat: startCustomCombat(run, enemyIds) };
+      void act(() => {});
+    },
+    goto: (target, arg) => {
+      run ??= createRun(Date.now() % 1_000_000);
+      overlay = null;
+      selectedUid = null;
+      skillTargeting = false;
+      switch (target) {
+        case 'title': screen = { kind: 'title' }; break;
+        case 'select': screen = { kind: 'select' }; break;
+        case 'reward': {
+          const tier = (arg as CombatTier) ?? 'normal';
+          screen = { kind: 'reward', options: rollCardRewards(run, tier), tier, rerolled: false };
+          break;
+        }
+        case 'rest': screen = { kind: 'rest', removing: false }; break;
+        case 'actStart': screen = { kind: 'actStart' }; break;
+        case 'won': screen = { kind: 'end', won: true }; break;
+        case 'lost': screen = { kind: 'end', won: false }; break;
+        case 'floor':
+          run.floor = Math.max(0, Math.min(run.floors.length - 1, Number(arg)));
+          enterFloor();
+          break;
+      }
+      void act(() => {});
+    },
+    act: (fn) => void act(fn),
+    render,
+    playEvents: async (events: CombatEvent[]) => {
+      if (busy) return;
+      busy = true;
+      try {
+        await playEvents(root, events, snapshot());
+      } finally {
+        busy = false;
+      }
+    },
+    hooks: (afterAction, afterRender) => {
+      devAfterAction = afterAction;
+      devAfterRender = afterRender;
+    },
+  };
+  void import('./dev/panel').then((m) => m.installDevPanel(api));
+}
 
 // 개발용: ?floor=N 으로 해당 층에서 바로 시작
 // (&seed= 시드 고정, &char=캐릭터id, &deck=카드id,카드id 덱 지정, &screen=reward|end 화면 확인)

@@ -12,7 +12,8 @@ import {
   type Intent,
 } from '../core/combat';
 import {
-  ACT_MAX_HP_BONUS, canRemoveCard, currentFloor, floorInAct, isFavored, MIN_DECK_SIZE, REST_HEAL_RATIO, runCharacter, type RunState,
+  ACT_MAX_HP_BONUS, canRemoveCard, currentFloor, floorInAct, isFavored, MIN_DECK_SIZE, REST_HEAL_RATIO, runCharacter,
+  SKILL_RECHARGE, type RunState,
 } from '../core/run';
 import { ACTS } from '../data/acts';
 import { ARCHETYPES } from '../data/archetypes';
@@ -147,9 +148,12 @@ export function cardHtml(
 const FLOOR_LABEL = { normal: '전투', elite: '정예', boss: '보스' } as const;
 
 export function soundButtons(): string {
-  return `
-    <button class="tb-btn sound-btn ${settings.sfx ? '' : 'off'}" data-action="toggle-sfx" ${tip('효과음\n켜기/끄기')}>효과음</button>
-    <button class="tb-btn sound-btn ${settings.music ? '' : 'off'}" data-action="toggle-music" ${tip('배경음\n켜기/끄기')}>배경음</button>`;
+  const control = (kind: 'sfx' | 'music', label: string, vol: number) => `
+    <span class="sound-ctl">
+      <button class="tb-btn sound-btn ${settings[kind] ? '' : 'off'}" data-action="toggle-${kind}" ${tip(`${label}\n켜기/끄기`)}>${label}</button>
+      <input type="range" class="vol-slider" data-volume="${kind}" min="0" max="100" step="5" value="${Math.round(vol * 100)}" aria-label="${label} 음량" ${tip(`${label} 음량`)}>
+    </span>`;
+  return control('sfx', '효과음', settings.sfxVol) + control('music', '배경음', settings.musicVol);
 }
 
 function topBar(run: RunState, hp: number): string {
@@ -197,11 +201,11 @@ export function renderTitle(): string {
  * fresh: 이번 행동으로 새로 손에 들어온 카드 — 올라오는 애니메이션
  */
 export function renderCombat(
-  run: RunState, state: CombatState, selectedUid: number | null,
+  run: RunState, state: CombatState, selectedUid: number | null, skillTargeting: boolean,
   dying: ReadonlySet<number>, fresh: ReadonlySet<number>,
 ): string {
   const p = state.player;
-  const targeting = selectedUid !== null;
+  const targeting = selectedUid !== null || skillTargeting;
 
   const enemies = state.enemies
     .map((e) => {
@@ -241,7 +245,9 @@ export function renderCombat(
     .join('');
 
   const selectedDef = selectedUid !== null ? CARDS[state.hand.find((c) => c.uid === selectedUid)?.defId ?? ''] : undefined;
-  const prompt = selectedDef && needsTarget(selectedDef) && aliveEnemies(state).length > 1 ? `▶ ${selectedDef.name} — 대상을 선택하세요` : '';
+  const prompt = skillTargeting && state.skill
+    ? `★ ${state.skill.name} — 대상을 선택하세요`
+    : selectedDef && needsTarget(selectedDef) && aliveEnemies(state).length > 1 ? `▶ ${selectedDef.name} — 대상을 선택하세요` : '';
 
   return `
     ${topBar(run, p.hp)}
@@ -275,7 +281,10 @@ export function renderCombat(
       </div>
       <div class="hud-right">
         <div class="piles tension ${state.extraDrawn >= MAX_EXTRA_DRAW ? 'spent' : ''}" ${tip(`태엽 장력\n한 턴에 카드 효과로 뽑을 수 있는 남은 장수. 다음 턴에 다시 ${MAX_EXTRA_DRAW}장이 됩니다.`)}>태엽 장력 ${MAX_EXTRA_DRAW - state.extraDrawn}/${MAX_EXTRA_DRAW}</div>
-        <button class="btn" data-action="end-turn">턴 종료 [E]</button>
+        <div class="hud-buttons">
+          ${skillButton(run, state, skillTargeting)}
+          <button class="btn" data-action="end-turn">턴 종료 [E]</button>
+        </div>
       </div>
     </div>
     <div class="hand-row">
@@ -286,6 +295,26 @@ export function renderCombat(
         ${pileButton('discard', '묘지', state.discardPile.length, '쓰고 버린 카드. 덱이 비면 섞어서 다시 덱이 됩니다.')}
       </div>
     </div>`;
+}
+
+/** 필살기 버튼 — 쓸 수 있으면 빛나고, 아니면 충전 칸을 보여 준다 */
+function skillButton(run: RunState, state: CombatState, active: boolean): string {
+  const skill = state.skill;
+  if (!skill) return '';
+  const used = state.skillUsed;
+  const charge = used ? 0 : run.skillCharge;
+  const pips = Array.from({ length: SKILL_RECHARGE }, (_, i) => `<i class="${state.skillReady || i < charge ? 'on' : ''}"></i>`).join('');
+  const status = state.skillReady
+    ? '지금 쓸 수 있습니다. [Q]'
+    : used ? `이번 전투에서 사용했습니다. 전투 ${SKILL_RECHARGE}번을 마치면 다시 충전됩니다.`
+    : `충전 중 — 전투를 ${SKILL_RECHARGE - charge}번 더 마치면 쓸 수 있습니다.`;
+  return `
+    <button class="skill-btn ${state.skillReady ? 'ready' : 'charging'} ${active ? 'active' : ''} skill-${run.character}"
+      data-action="skill" ${state.skillReady ? '' : 'aria-disabled="true"'} ${tip(`★ 필살기 · ${skill.name}\n${skill.text}\n\n${status}`)}>
+      <span class="skill-star">★</span>
+      <span class="skill-name">${skill.name}</span>
+      <span class="skill-pips">${pips}</span>
+    </button>`;
 }
 
 /** 손패가 많으면 카드를 겹쳐서 한 줄에 맞춘다 */
@@ -354,6 +383,7 @@ export function renderSelect(): string {
         <p class="char-title">${c.title}</p>
         <div class="char-stats">${iconImg('heart', 2)}${c.maxHp} <span class="arch arch-${c.archetype}">${ARCHETYPES[c.archetype].name} 덱</span></div>
         <div class="char-passive"><b>${c.passive.name}</b><br>${c.passive.text}</div>
+        <div class="char-skill"><b>★ 필살기 · ${c.skill.name}</b><br>${c.skill.text}<br><small>전투 ${SKILL_RECHARGE}번마다 한 번</small></div>
         <p class="char-desc">${c.desc}</p>
         <div class="char-deck">${signature.map((n) => `<span>${n}</span>`).join('')}</div>
       </div>`;

@@ -1,4 +1,4 @@
-import type { Statuses } from '../core/types';
+import type { SkillDef, Statuses } from '../core/types';
 import type { ArchetypeId } from './archetypes';
 
 export interface CharacterDef {
@@ -18,6 +18,8 @@ export interface CharacterDef {
     statuses?: Statuses;
     maxHeat?: number;
   };
+  /** 필살기 — SKILL_RECHARGE번의 전투마다 한 번 */
+  skill: SkillDef;
 }
 
 const basics = (strikes: number, guards: number) => [
@@ -32,6 +34,11 @@ const CHARACTER_LIST: CharacterDef[] = [
     maxHp: 70, archetype: 'rapid',
     deck: [...basics(4, 4), 'wind_up', 'rapid_cog'],
     passive: { name: '태엽 장인', text: '매 턴 회전 1로 시작한다.', statuses: { flywheel: 1 } },
+    skill: {
+      id: 'clockwork_frenzy', name: '태엽 폭주',
+      text: '회전 +6, 증기압 +2, 카드 3장 드로우.',
+      effects: [{ kind: 'wind', amount: 6 }, { kind: 'steam', amount: 2 }, { kind: 'draw', amount: 3 }],
+    },
   },
   {
     id: 'stoker', name: '보일러공', title: '꺼지지 않는 불씨',
@@ -39,6 +46,16 @@ const CHARACTER_LIST: CharacterDef[] = [
     maxHp: 66, archetype: 'burn',
     deck: [...basics(3, 4), 'poker_jab', 'acid_flask', 'boiling_pipe'],
     passive: { name: '불씨', text: '적에게 화상·산성·감전을 걸 때마다 1 더 건다.', statuses: { kindling: 1 } },
+    skill: {
+      id: 'furnace_burst', name: '용광로 개방',
+      text: '모든 적에게 피해 6, 화상 6, 산성 3, 감전 3.',
+      effects: [
+        { kind: 'damageAll', amount: 6 },
+        { kind: 'applyStatus', status: 'burn', amount: 6, target: 'allEnemies' },
+        { kind: 'applyStatus', status: 'acid', amount: 3, target: 'allEnemies' },
+        { kind: 'applyStatus', status: 'shock', amount: 3, target: 'allEnemies' },
+      ],
+    },
   },
   {
     id: 'gunner', name: '증기 포수', title: '한 발이면 충분하다',
@@ -46,6 +63,14 @@ const CHARACTER_LIST: CharacterDef[] = [
     maxHp: 72, archetype: 'pressure',
     deck: [...basics(3, 3), 'gauge_strike', 'load_shell', 'load_shell', 'steam_cannon'],
     passive: { name: '축압 탱크', text: '매 턴 압력 +3.', statuses: { compressor: 3 } },
+    skill: {
+      id: 'full_barrage', name: '최대 압력 포격',
+      text: '압력 +6. 피해 18 + 압력 1당 3. (압력은 남는다)',
+      effects: [
+        { kind: 'applyStatus', status: 'pressure', amount: 6, target: 'self' },
+        { kind: 'damage', amount: 18, perPressure: 3 },
+      ],
+    },
   },
   {
     id: 'guardian', name: '황동 수호자', title: '움직이는 성벽',
@@ -53,6 +78,15 @@ const CHARACTER_LIST: CharacterDef[] = [
     maxHp: 85, archetype: 'barrier',
     deck: [...basics(4, 3), 'spiked_guard', 'spiked_guard', 'shield_bash'],
     passive: { name: '가시 외피', text: '가시 3을 두르고 싸운다.', statuses: { thorns: 3 } },
+    skill: {
+      id: 'brass_fortress', name: '황동 요새',
+      text: '방어도 20, 가시 +3. 모든 적에게 녹 2.',
+      effects: [
+        { kind: 'block', amount: 20 },
+        { kind: 'applyStatus', status: 'thorns', amount: 3, target: 'self' },
+        { kind: 'applyStatus', status: 'weak', amount: 2, target: 'allEnemies' },
+      ],
+    },
   },
   {
     id: 'overclocker', name: '오버클러커', title: '한계 따위는 없다',
@@ -62,6 +96,11 @@ const CHARACTER_LIST: CharacterDef[] = [
     passive: {
       name: '냉각 코어', text: '과열 한계 15. 과열이 오를 때마다 방어도 +2.',
       maxHeat: 15, statuses: { heatsink: 2 },
+    },
+    skill: {
+      id: 'critical_break', name: '임계 돌파',
+      text: '모든 적에게 피해 12 + 과열 1당 3. 그 뒤 과열을 모두 없애고 없앤 과열 1당 방어도 2.',
+      effects: [{ kind: 'damageAll', amount: 12, perHeat: 3 }, { kind: 'vent', blockPerHeat: 2 }],
     },
   },
 ];

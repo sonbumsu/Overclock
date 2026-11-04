@@ -8,7 +8,8 @@ let musicBus: GainNode | null = null;
 let noiseBuffer: AudioBuffer | null = null;
 
 const SETTINGS_KEY = 'overclock:sound';
-export const settings = { sfx: true, music: true };
+/** sfx·music: 켜짐 여부, sfxVol·musicVol: 음량 0~1 */
+export const settings = { sfx: true, music: true, sfxVol: 1, musicVol: 1 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}'));
 } catch {
@@ -33,22 +34,36 @@ export function unlock(): void {
   master.gain.value = 0.5;
   master.connect(ctx.destination);
   sfxBus = ctx.createGain();
-  sfxBus.gain.value = settings.sfx ? 1 : 0;
   sfxBus.connect(master);
   musicBus = ctx.createGain();
-  musicBus.gain.value = settings.music ? 0.32 : 0;
   musicBus.connect(master);
+  applyGains();
   noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
   const data = noiseBuffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
   if (pendingMusic) startMusic(pendingMusic);
 }
 
+/** 배경음은 효과음보다 작게 깔리도록 기본 비율을 낮춰 둔다 */
+const MUSIC_BASE = 0.32;
+
+function applyGains(): void {
+  if (sfxBus) sfxBus.gain.value = settings.sfx ? settings.sfxVol : 0;
+  if (musicBus) musicBus.gain.value = settings.music ? settings.musicVol * MUSIC_BASE : 0;
+}
+
 export function toggle(kind: 'sfx' | 'music'): void {
   settings[kind] = !settings[kind];
   saveSettings();
-  if (kind === 'sfx' && sfxBus) sfxBus.gain.value = settings.sfx ? 1 : 0;
-  if (kind === 'music' && musicBus) musicBus.gain.value = settings.music ? 0.32 : 0;
+  applyGains();
+}
+
+/** 음량 조절 (0~1). 꺼져 있던 소리는 슬라이더를 움직이면 다시 켠다 */
+export function setVolume(kind: 'sfx' | 'music', vol: number): void {
+  settings[kind === 'sfx' ? 'sfxVol' : 'musicVol'] = Math.min(1, Math.max(0, vol));
+  settings[kind] = true;
+  saveSettings();
+  applyGains();
 }
 
 // ── 합성 도구 ──
@@ -106,7 +121,7 @@ export type Sfx =
   | 'hit' | 'hitBig' | 'hitCrit' | 'hurt' | 'blocked' | 'block' | 'kill'
   | 'burn' | 'acid' | 'shock' | 'heal' | 'buff' | 'debuff' | 'stun'
   | 'mesh' | 'overclock' | 'breakdown' | 'beam' | 'power' | 'enemyMove'
-  | 'turn' | 'victory' | 'defeat' | 'reward' | 'remove' | 'rest';
+  | 'turn' | 'victory' | 'defeat' | 'reward' | 'remove' | 'rest' | 'ultimate';
 
 const SFX: Record<Sfx, () => void> = {
   click: () => tone({ from: 1400, to: 900, dur: 0.05, vol: 0.08 }),
@@ -205,7 +220,17 @@ const SFX: Record<Sfx, () => void> = {
     for (let i = 0; i < 4; i++) tone({ from: 1600 - i * 250, dur: 0.03, vol: 0.08, delay: i * 0.05 });
   },
   rest: () => [60, 67, 72].forEach((n, i) => tone({ type: 'triangle', from: note(n), dur: 0.5, vol: 0.12, delay: i * 0.15 })),
+  // 필살기 컷인: 휘익 올라가는 소리 뒤에 화음이 터진다
+  ultimate: () => {
+    noise(0.45, { vol: 0.35, filter: 'bandpass', freq: 600, to: 6000 });
+    tone({ type: 'sawtooth', from: 110, to: 880, dur: 0.4, vol: 0.12 });
+    [60, 64, 67, 72, 76].forEach((n) => tone({ type: 'square', from: note(n + 12), dur: 0.6, vol: 0.06, delay: 0.38 }));
+    tone({ type: 'sine', from: 90, to: 40, dur: 0.5, vol: 0.4, delay: 0.38 });
+    noise(0.5, { vol: 0.3, freq: 3000, to: 200, delay: 0.38 });
+  },
 };
+
+export const SFX_NAMES = Object.keys(SFX) as Sfx[];
 
 /** 같은 소리가 한 프레임에 겹쳐 터지는 것을 막는다 */
 const lastPlayed = new Map<Sfx, number>();

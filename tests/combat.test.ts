@@ -9,9 +9,10 @@ import {
   HEAT_PER_MISSING_STEAM,
   MAX_EXTRA_DRAW,
   playCard,
+  useSkill,
 } from '../src/core/combat';
 import { Rng } from '../src/core/rng';
-import { createRun, MIN_DECK_SIZE, removeCard, rollCardRewards, startFloorCombat } from '../src/core/run';
+import { createRun, MIN_DECK_SIZE, removeCard, rollCardRewards, settleSkill, SKILL_RECHARGE, startFloorCombat } from '../src/core/run';
 import { ARCHETYPES } from '../src/data/archetypes';
 import { CARDS } from '../src/data/cards';
 import { CHARACTER_IDS, CHARACTERS } from '../src/data/characters';
@@ -523,5 +524,69 @@ describe('태엽 장력', () => {
     expect(state.extraDrawn).toBe(3);
     endTurn(state);
     expect(state.extraDrawn).toBe(0);
+  });
+});
+
+describe('필살기', () => {
+  /** 첫 전투 층으로 옮긴 런 */
+  function combatRun(char: string) {
+    const run = createRun(5, char);
+    run.floor = run.floors.findIndex((f) => f.kind === 'combat');
+    return run;
+  }
+
+  it('모든 캐릭터에게 필살기가 있고, 첫 전투부터 쓸 수 있다', () => {
+    for (const id of CHARACTER_IDS) {
+      const combat = startFloorCombat(combatRun(id));
+      expect(combat.skill?.id).toBe(CHARACTERS[id].skill.id);
+      expect(combat.skillReady).toBe(true);
+    }
+  });
+
+  it('한 전투에 한 번만 쓰고, 증기압을 쓰지 않는다', () => {
+    const combat = startFloorCombat(combatRun('guardian'));
+    const steam = combat.player.steam;
+    expect(useSkill(combat)).toBe(true);
+    expect(combat.player.block).toBeGreaterThanOrEqual(20);
+    expect(combat.player.steam).toBe(steam);
+    expect(combat.events[0]).toEqual({ kind: 'skill', skillId: 'brass_fortress' });
+    expect(useSkill(combat)).toBe(false);
+  });
+
+  it(`쓰고 나면 전투 ${SKILL_RECHARGE}번을 마쳐야 다시 쓸 수 있다`, () => {
+    const run = combatRun('engineer');
+    const used = startFloorCombat(run);
+    useSkill(used);
+    settleSkill(run, used);
+    const ready: boolean[] = [];
+    for (let i = 0; i < SKILL_RECHARGE; i++) {
+      const c = startFloorCombat(run);
+      ready.push(c.skillReady);
+      settleSkill(run, c);
+    }
+    expect(ready).toEqual([false, false, true]);
+  });
+
+  it('대상 지정 필살기는 적이 여럿이면 대상이 필요하다', () => {
+    const state = createCombat({
+      hp: 70, maxHp: 70, deck: [], enemyIds: ['automaton', 'automaton'], rng: new Rng(1), skill: CHARACTERS.gunner.skill,
+    });
+    expect(useSkill(state)).toBe(false);
+    const hp = state.enemies[1].hp;
+    expect(useSkill(state, 1)).toBe(true);
+    expect(state.enemies[1].hp).toBeLessThan(hp);
+    expect(state.player.statuses.pressure).toBe(6);
+  });
+
+  it('임계 돌파는 과열에 비례해 모두를 치고 과열을 비운다', () => {
+    const state = createCombat({
+      hp: 70, maxHp: 70, deck: [], enemyIds: ['automaton', 'automaton'], rng: new Rng(1), skill: CHARACTERS.overclocker.skill,
+    });
+    for (const e of state.enemies) e.hp = e.maxHp = 200;
+    state.player.heat = 5;
+    useSkill(state);
+    expect(state.enemies.map((e) => e.hp)).toEqual([200 - 27, 200 - 27]);
+    expect(state.player.heat).toBe(0);
+    expect(state.player.block).toBe(10);
   });
 });

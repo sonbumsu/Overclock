@@ -1,4 +1,6 @@
 import { CARDS } from '../data/cards';
+import { CHARACTERS } from '../data/characters';
+import { HERO_IMAGES } from './sprite-heroes';
 import type { CombatEvent, DotId, UnitRef } from '../core/types';
 import { bake, C, Pix } from './pixel';
 import { STATUS_INFO } from './render';
@@ -9,7 +11,7 @@ import { sfx, type Sfx } from './sound';
 
 export type FxKind =
   | 'slash' | 'steam' | 'arcane' | 'cogs' | 'bolt' | 'impact' | 'explosion' | 'shield'
-  | 'flame' | 'charge' | 'powerup' | 'acid' | 'zap';
+  | 'flame' | 'charge' | 'powerup' | 'acid' | 'zap' | 'shockwave' | 'burst' | 'pillar';
 
 interface Sheet {
   size: number;
@@ -252,7 +254,60 @@ const SHEETS: Record<FxKind, Sheet> = {
       }
     },
   },
+
+  // 퍼져 나가는 충격파 고리 — 큰 타격 밑에 깐다
+  shockwave: {
+    size: 64, frames: 7, ms: 420,
+    draw: (p, f) => {
+      const r = 4 + f * 4.4;
+      const t = f < 2 ? 4 : f < 4 ? 3 : 2;
+      p.ring(32, 32, r, t, f < 2 ? C.white : f < 4 ? C.glow : C.heat);
+      if (f < 3) p.ring(32, 32, Math.max(1, r - t - 2), 1, C.white);
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2 + jitter(i) * 0.3;
+        const d = r + 3 + jitter(i + f) * 4;
+        if (f >= 1 && f < 6 && jitter(i * 5 + f) > 0.25) p.rect(32 + Math.cos(a) * d, 32 + Math.sin(a) * d, 2, 2, i % 3 ? C.glow : C.white);
+      }
+      if (f >= 5) for (let i = 0; i < p.data.length; i++) if ((i + Math.floor(i / 64)) % 2) p.data[i] = null;
+    },
+  },
+
+  // 별처럼 뻗는 섬광 — 강타의 순간
+  burst: {
+    size: 48, frames: 5, ms: 240,
+    draw: (p, f) => {
+      const len = [10, 20, 23, 22, 16][f];
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2 + 0.13;
+        const l = i % 2 ? len * 0.55 : len;
+        const start = f >= 3 ? l * 0.5 : 0;
+        p.line(24 + Math.cos(a) * start, 24 + Math.sin(a) * start, 24 + Math.cos(a) * l, 24 + Math.sin(a) * l, f < 2 ? C.white : C.glow);
+      }
+      if (f < 3) p.circle(24, 24, [6, 9, 5][f], C.white).circle(24, 24, [3, 5, 2][f], C.glow);
+    },
+  },
+
+  // 바닥에서 치솟는 불기둥
+  pillar: {
+    size: 48, frames: 8, ms: 560,
+    draw: (p, f) => {
+      const h = [10, 30, 46, 48, 48, 40, 26, 12][f];
+      const w = [6, 9, 11, 11, 10, 8, 6, 4][f];
+      for (let y = 0; y < h; y++) {
+        const yy = 47 - y;
+        const wob = Math.round(Math.sin((y + f * 3) * 0.6) * 2);
+        const ww = w * (1 - (y / 48) * 0.5);
+        p.rect(24 - ww + wob, yy, ww * 2, 1, C.red1);
+        p.rect(24 - ww * 0.65 + wob, yy, ww * 1.3, 1, C.heat);
+        p.rect(24 - ww * 0.3 + wob, yy, ww * 0.6, 1, f < 5 ? C.glow : C.heat);
+      }
+      for (let i = 0; i < 8; i++) if (f >= 2) p.set(14 + jitter(i) * 20, 44 - ((f * 6 + i * 7) % 44), i % 2 ? C.glow : C.white);
+      p.outline(C.red0);
+    },
+  },
 };
+
+export const FX_KINDS = Object.keys(SHEETS) as FxKind[];
 
 function sheetURL(kind: FxKind): string {
   return bake(`fx:${kind}`, () => {
@@ -285,6 +340,7 @@ export function spawnFx(host: HTMLElement, kind: FxKind, scale = 4, dx = 0, dy =
     `animation-duration:${d.ms}ms`,
     `animation-timing-function:steps(${d.frames})`,
     `margin-left:${dx}px`, `margin-top:${dy}px`,
+    `--glow:${FX_GLOW[kind]}`,
   ].join(';');
   host.appendChild(el);
   setTimeout(() => el.remove(), d.ms + 50);
@@ -305,7 +361,7 @@ const FAMILY_SFX: Record<string, Sfx> = { gear: 'cardGear', steam: 'cardSteam', 
 const DOT_SFX: Record<DotId, Sfx> = { burn: 'burn', acid: 'acid', shock: 'shock' };
 const FAMILY_FX: Record<string, FxKind> = { gear: 'slash', steam: 'steam', arcane: 'arcane' };
 /** 시전자에서 대상까지 증기 광선을 쏘는 카드 */
-const BEAM_CARDS = new Set(['steam_cannon', 'steam_ram']);
+const BEAM_CARDS = new Set(['steam_cannon', 'steam_ram', 'skill:full_barrage']);
 
 const FX_COLORS: Record<FxKind, string[]> = {
   slash: [C.white, C.brass3, C.brass2], steam: [C.steam2, C.white, C.steam1], arcane: [C.arc3, C.arc2, C.cyan],
@@ -313,6 +369,13 @@ const FX_COLORS: Record<FxKind, string[]> = {
   explosion: [C.heat, C.glow, C.red2], shield: [C.steam2, C.white], flame: [C.heat, C.glow, C.red2],
   charge: [C.steam2, C.white], powerup: [C.glow, C.brass3, C.white],
   acid: [C.acid1, C.acid2, C.acid0], zap: [C.cyan, C.white, C.arc3],
+  shockwave: [C.white, C.glow, C.heat], burst: [C.white, C.glow], pillar: [C.heat, C.glow, C.red2],
+};
+/** 이펙트 뒤에 번지는 빛 색 */
+const FX_GLOW: Record<FxKind, string> = {
+  slash: '#f5dc7a', steam: '#d8eef4', arcane: '#a77bd9', cogs: '#f5dc7a', bolt: '#ffe066', impact: '#ff6a4d',
+  explosion: '#f08a24', shield: '#8fb8c9', flame: '#f08a24', charge: '#d8eef4', powerup: '#ffe066',
+  acid: '#8fd42e', zap: '#7ff3ff', shockwave: '#ffe066', burst: '#fffaf0', pillar: '#f08a24',
 };
 const FAMILY_COLOR: Record<string, string> = { gear: C.brass3, steam: C.steam2, arcane: C.arc3 };
 
@@ -323,6 +386,7 @@ const POSITIVE = new Set([
 
 function hitFx(ev: Extract<CombatEvent, { kind: 'hit' }>): FxKind {
   if (ev.source !== 'player') return 'impact';
+  if (ev.cardId?.startsWith('skill:')) return SKILL_STYLE[ev.cardId.slice(6)]?.hit ?? 'explosion';
   const def = ev.cardId ? CARDS[ev.cardId] : undefined;
   return (ev.cardId && CARD_FX[ev.cardId]) || FAMILY_FX[def?.family ?? ''] || 'slash';
 }
@@ -393,19 +457,138 @@ function castLabel(unit: HTMLElement, text: string, color: string): void {
 }
 
 /** 시전자에서 대상까지 뻗는 증기 광선 */
-function beam(stage: HTMLElement | null, from: HTMLElement, to: HTMLElement): void {
+function beam(stage: HTMLElement | null, from: HTMLElement, to: HTMLElement, cls = ''): void {
   if (!stage) return;
   const s = stage.getBoundingClientRect();
   const a = from.getBoundingClientRect();
   const b = to.getBoundingClientRect();
   const x1 = a.right - s.left - 24;
   const el = document.createElement('div');
-  el.className = 'beam';
+  el.className = `beam ${cls}`;
   el.style.left = `${x1}px`;
   el.style.top = `${b.top - s.top + b.height * 0.5}px`;
   el.style.width = `${Math.max(40, b.left - s.left + b.width / 2 - x1)}px`;
   stage.appendChild(el);
   setTimeout(() => el.remove(), 560);
+}
+
+/** 날아가는 투사체 스프라이트 */
+const PROJECTILES: Record<string, () => Pix> = {
+  arcane: () => new Pix(12, 12).circle(6, 6, 5, C.arc1).circle(6, 6, 4, C.arc2).circle(5, 5, 2, C.white).outline(C.arc0),
+  steam: () => new Pix(12, 12).circle(6, 6, 5, C.steam1).circle(5, 5, 3, C.steam2).circle(4, 4, 1, C.white).outline(C.steam0),
+  gear: () => new Pix(14, 14).gear(7, 7, 5, 6, C.brass2, { depth: 2, hole: 1, inner: C.brass1 }).outline(),
+};
+
+/** 시전자에서 대상으로 투사체를 날린다. 도착할 때 끝난다 */
+function projectile(stage: HTMLElement | null, from: HTMLElement, to: HTMLElement, kind: keyof typeof PROJECTILES, ms = 170): Promise<void> {
+  if (!stage) return Promise.resolve();
+  const s = stage.getBoundingClientRect();
+  const a = from.getBoundingClientRect();
+  const b = to.getBoundingClientRect();
+  const el = document.createElement('div');
+  el.className = `projectile proj-${kind}`;
+  const x0 = a.right - s.left - 20, y0 = a.top - s.top + a.height * 0.45;
+  const x1 = b.left - s.left + b.width / 2, y1 = b.top - s.top + b.height * 0.5;
+  el.style.cssText = [
+    `left:${x0}px`, `top:${y0}px`, `--dx:${x1 - x0}px`, `--dy:${y1 - y0}px`,
+    `background-image:url(${bake(`proj:${kind}`, PROJECTILES[kind]).url})`, `animation-duration:${ms}ms`,
+  ].join(';');
+  stage.appendChild(el);
+  setTimeout(() => el.remove(), ms + 30);
+  return wait(ms);
+}
+
+/** 필살기마다의 색과 연출. after는 컷인 직후, 효과가 터지기 전에 재생된다 */
+interface SkillStyle {
+  color: string;
+  hit: FxKind;
+  after: (stage: HTMLElement | null, player: HTMLElement, enemies: HTMLElement[]) => Promise<void>;
+}
+
+const SKILL_STYLE: Record<string, SkillStyle> = {
+  clockwork_frenzy: {
+    color: C.brass2, hit: 'cogs',
+    after: async (stage, player) => {
+      spawnFx(player, 'cogs', 7);
+      spawnFx(player, 'powerup', 6);
+      spawnFx(player, 'shockwave', 5);
+      sparks(player, [C.brass3, C.glow, C.copper2, C.white], 36, 1.8);
+      flashStage(stage, '#f5dc7a66', 260);
+      sfx('power');
+      await wait(380);
+    },
+  },
+  furnace_burst: {
+    color: C.heat, hit: 'flame',
+    after: async (stage, player, enemies) => {
+      spawnFx(player, 'flame', 6);
+      flashStage(stage, '#f08a2477', 280);
+      if (stage) restartClass(stage, 'quake-hard', 450);
+      sfx('burn');
+      for (const e of enemies) {
+        spawnFx(e, 'pillar', 6);
+        sparks(e, [C.heat, C.glow, C.red2], 24, 1.6);
+        await wait(90);
+      }
+      await wait(260);
+    },
+  },
+  full_barrage: {
+    color: C.steam1, hit: 'explosion',
+    after: async (stage, player) => {
+      spawnFx(player, 'charge', 7);
+      sparks(player, [C.steam2, C.white, C.steam1], 24, 1.2);
+      sfx('overclock');
+      await wait(300);
+      flashStage(stage, '#d8eef499', 180);
+    },
+  },
+  brass_fortress: {
+    color: C.brass3, hit: 'impact',
+    after: async (stage, player) => {
+      spawnFx(player, 'shield', 9);
+      spawnFx(player, 'shockwave', 6);
+      sparks(player, [C.brass3, C.steam2, C.white], 30, 1.5);
+      flashStage(stage, '#f5dc7a55', 240);
+      if (stage) restartClass(stage, 'quake', 320);
+      sfx('block');
+      await wait(380);
+    },
+  },
+  critical_break: {
+    color: C.arc2, hit: 'bolt',
+    after: async (stage, player, enemies) => {
+      spawnFx(player, 'zap', 7);
+      sparks(player, [C.cyan, C.arc3, C.heat], 30, 1.6);
+      sfx('shock');
+      flashStage(stage, '#a77bd988', 220);
+      for (const e of enemies) {
+        spawnFx(e, 'bolt', 6);
+        spawnFx(e, 'shockwave', 4);
+      }
+      if (stage) restartClass(stage, 'quake-hard', 450);
+      await wait(320);
+    },
+  },
+};
+
+/** 필살기 컷인 — 화면이 어두워지고, 띠가 가로지르며 캐릭터와 기술 이름이 들어온다 */
+async function cutIn(stage: HTMLElement | null, skillId: string, color: string): Promise<void> {
+  if (!stage) return;
+  const owner = Object.values(CHARACTERS).find((c) => c.skill.id === skillId);
+  const hero = owner ? HERO_IMAGES[owner.id] : undefined;
+  const el = document.createElement('div');
+  el.className = 'cutin';
+  el.style.setProperty('--c', color);
+  el.innerHTML = `
+    <div class="cutin-dim"></div>
+    <div class="cutin-band"><div class="cutin-lines"></div></div>
+    ${hero ? `<img class="cutin-hero" src="${hero.url}" alt="">` : ''}
+    <div class="cutin-text"><small>필살기</small><b>${owner?.skill.name ?? ''}</b></div>`;
+  stage.appendChild(el);
+  sfx('ultimate');
+  setTimeout(() => el.remove(), 1150);
+  await wait(950);
 }
 
 // ── 이벤트 재생 ─────────────────────────────────────
@@ -502,6 +685,16 @@ export async function playEvents(root: HTMLElement, events: CombatEvent[], befor
         }
         break;
       }
+      case 'skill': {
+        hitsInCard = 0;
+        beamed = false;
+        const style = SKILL_STYLE[ev.skillId];
+        await cutIn(stage, ev.skillId, style?.color ?? C.glow);
+        const player = unit('player');
+        const enemies = [...root.querySelectorAll<HTMLElement>('.unit.enemy:not(.dead)')].map(host);
+        if (player && style) await style.after(stage, host(player), enemies);
+        break;
+      }
       case 'enemyMove': {
         hitsInCard = 0;
         const el = unit(ev.enemy);
@@ -514,21 +707,32 @@ export async function playEvents(root: HTMLElement, events: CombatEvent[], befor
         const el = unit(ev.target);
         if (!el) break;
         const player = unit('player');
+        const skillHit = ev.cardId?.startsWith('skill:') ?? false;
         if (ev.cardId && BEAM_CARDS.has(ev.cardId) && player && !beamed) {
           beamed = true;
           sfx('beam');
-          beam(stage, host(player), host(el));
-          flashStage(stage, '#d8eef466', 140);
-          await wait(140);
+          beam(stage, host(player), host(el), skillHit ? 'mega' : '');
+          flashStage(stage, skillHit ? '#ffffffaa' : '#d8eef466', 140);
+          await wait(skillHit ? 220 : 140);
+        } else if (ev.source === 'player' && player && hitsInCard === 0 && ev.cardId && !skillHit) {
+          // 원거리 계열은 투사체가 날아간 뒤에 맞는다
+          const fam = CARDS[ev.cardId]?.family;
+          if (fam === 'arcane' || fam === 'steam') await projectile(stage, host(player), host(el), fam);
+          else if (ev.cardId === 'thorns') await projectile(stage, host(player), host(el), 'gear', 120);
         }
         const fx = hitFx(ev);
         const spread = hitsInCard++ * 18;
-        spawnFx(host(el), fx, 4, spread * (hitsInCard % 2 ? 1 : -1), -spread / 2);
-        sparks(host(el), FX_COLORS[fx], 6 + Math.min(ev.damage, 20) / 2, 0.8 + ev.damage / 30);
+        const dx = spread * (hitsInCard % 2 ? 1 : -1), dy = -spread / 2;
+        // 섬광 → 본 이펙트 → (세게 맞으면) 충격파 순으로 겹친다
+        if (ev.damage > 0) spawnFx(host(el), 'burst', skillHit ? 5 : 3, dx, dy);
+        spawnFx(host(el), fx, skillHit ? 6 : 4, dx, dy);
+        if (skillHit || ev.damage >= 10) spawnFx(host(el), 'shockwave', skillHit ? 5 : 3, dx, dy);
+        sparks(host(el), FX_COLORS[fx], (skillHit ? 16 : 8) + Math.min(ev.damage, 24) / 2, 0.9 + ev.damage / 25);
         restartClass(el, 'hit');
+        if (ev.damage > 0) restartClass(el, ev.target === 'player' ? 'knock-left' : 'knock', 260);
         setBar(el, ev.hp, before.get(ev.target)?.maxHp ?? 1);
 
-        const big = ev.damage >= 15;
+        const big = ev.damage >= 15 || (skillHit && ev.damage > 0);
         const crit = ev.damage >= 30;
         if (ev.damage === 0 && ev.blocked > 0) sfx('blocked');
         else if (ev.target === 'player') sfx('hurt');

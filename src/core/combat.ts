@@ -11,6 +11,7 @@ import type {
   EnemyMove,
   EnemyState,
   PlayerState,
+  SkillDef,
   StatusId,
   Statuses,
   UnitRef,
@@ -43,6 +44,9 @@ export interface CombatSetup {
   /** 캐릭터 고유 능력 */
   statuses?: Statuses;
   maxHeat?: number;
+  /** 캐릭터 필살기와 이번 전투에서 쓸 수 있는지 */
+  skill?: SkillDef;
+  skillReady?: boolean;
 }
 
 export function createCombat(setup: CombatSetup): CombatState {
@@ -73,6 +77,9 @@ export function createCombat(setup: CombatSetup): CombatState {
     events: [],
     outcome: 'ongoing',
     nextCardUid: Math.max(0, ...setup.deck.map((c) => c.uid)) + 1,
+    skill: setup.skill ?? null,
+    skillReady: !!setup.skill && (setup.skillReady ?? true),
+    skillUsed: false,
   };
   for (const enemy of enemies) chooseNextMove(state, enemy);
   startPlayerTurn(state);
@@ -83,12 +90,29 @@ export const cardDef = (card: CardInstance): CardDef => CARDS[card.defId];
 
 export const aliveEnemies = (state: CombatState): EnemyState[] => state.enemies.filter((e) => e.hp > 0);
 
-export function needsTarget(def: CardDef): boolean {
-  const targeted = (e: Effect) =>
-    e.kind === 'damage' ||
-    e.kind === 'detonate' ||
-    ((e.kind === 'applyStatus' || e.kind === 'multiplyStatus') && e.target === 'enemy');
-  return def.effects.some(targeted) || (def.mesh?.effects.some(targeted) ?? false);
+const targeted = (e: Effect) =>
+  e.kind === 'damage' ||
+  e.kind === 'detonate' ||
+  ((e.kind === 'applyStatus' || e.kind === 'multiplyStatus') && e.target === 'enemy');
+
+export function needsTarget(def: CardDef | SkillDef): boolean {
+  return def.effects.some(targeted) || ('mesh' in def && (def.mesh?.effects.some(targeted) ?? false));
+}
+
+/** 필살기 사용 — 증기압·회전·연동에 영향을 주지 않는 별도 행동. 한 전투에 한 번 */
+export function useSkill(state: CombatState, targetUid?: number): boolean {
+  const skill = state.skill;
+  if (state.outcome !== 'ongoing' || !skill || !state.skillReady) return false;
+  const alive = aliveEnemies(state);
+  const target = alive.find((e) => e.uid === targetUid) ?? (alive.length === 1 ? alive[0] : undefined);
+  if (needsTarget(skill) && !target) return false;
+  state.skillReady = false;
+  state.skillUsed = true;
+  state.log.push(`★ 필살기 — ${skill.name}!`);
+  state.events.push({ kind: 'skill', skillId: skill.id });
+  resolveEffects(state, skill.effects, target, `skill:${skill.id}`);
+  checkOutcome(state);
+  return true;
 }
 
 export function isMeshActive(state: CombatState, def: CardDef): boolean {
@@ -491,6 +515,7 @@ function tickStatuses(target: Combatant): void {
 }
 
 function checkOutcome(state: CombatState): boolean {
+  if (state.god) state.player.hp = Math.max(1, state.player.hp);
   if (state.player.hp <= 0) state.outcome = 'lost';
   else if (aliveEnemies(state).length === 0) state.outcome = 'won';
   return state.outcome !== 'ongoing';
