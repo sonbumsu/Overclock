@@ -19,6 +19,7 @@ import { ACTS } from '../data/acts';
 import { ARCHETYPES } from '../data/archetypes';
 import { CHARACTER_IDS, CHARACTERS } from '../data/characters';
 import type { CardDef, Combatant, CombatState, Family, StatusId } from '../core/types';
+import logoUrl from '../assets/logo.png';
 import { cardArtImg } from './card-art';
 import { cardBackImg } from './card-frame';
 import { settings } from './sound';
@@ -179,7 +180,7 @@ export function renderTitle(): string {
       <div class="title-gear">${spriteImg('bigGear', 6, 'spin')}</div>
       <div class="title-hero">${spriteImg('engineer', 4, 'bob')}</div>
       <div class="title-text">
-        <h1 class="logo">오버클록</h1>
+        <h1 class="logo-img"><img src="${logoUrl}" width="815" height="370" alt="오버클록 (Overclock)"></h1>
         <p class="tagline">멈춰버린 세계의 시간을 다시 돌리기 위해<br>마도공학 시계탑을 오른다</p>
         <button class="btn big" data-action="start">태엽 감기</button>
       </div>

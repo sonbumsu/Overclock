@@ -268,6 +268,8 @@ b { color: var(--brass-light); font-weight: normal; }
   text-shadow: 4px 0 0 var(--ink), -4px 0 0 var(--ink), 0 4px 0 var(--ink), 0 -4px 0 var(--ink), 6px 6px 0 #6e5013, 8px 8px 0 var(--ink);
 }
 .logo.lose { color: #c9b8a0; font-size: 48px; }
+.logo-img { margin: 0; line-height: 0; }
+.logo-img img { width: 520px; max-width: 70vw; height: auto; image-rendering: pixelated; filter: drop-shadow(0 6px 0 #140d08cc) drop-shadow(0 0 18px #d4ad3555); }
 .tagline { font-size: 12px; line-height: 2; color: var(--text); background: #140d08bb; padding: 4px 12px; }
 
 .howto { max-width: 720px; margin: 0 auto; }

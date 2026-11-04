@@ -1,3 +1,5 @@
+<p align="center"><img src="src/assets/logo.png" alt="오버클록 (Overclock)" width="560"></p>
+
 # 오버클록 (Overclock)
 
 > 멈춰버린 세계의 시간을 다시 돌리기 위해, 마도공학 시계탑을 오른다.
