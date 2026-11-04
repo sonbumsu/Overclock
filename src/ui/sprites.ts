@@ -31,9 +31,63 @@ function bigGear(): Pix {
   return p.outline();
 }
 
+/** 이벤트 — 버려진 공구함 */
+function toolbox(): Pix {
+  const p = new Pix(34, 26);
+  p.rect(3, 10, 28, 14, C.red1).rect(3, 10, 28, 2, C.red2).rect(3, 22, 28, 2, C.red0);
+  p.rect(5, 6, 24, 5, C.red0).rect(5, 6, 24, 1, C.red1);
+  p.rect(13, 1, 8, 2, C.steel2).rect(12, 2, 2, 5, C.steel2).rect(20, 2, 2, 5, C.steel2);
+  p.rect(15, 14, 4, 3, C.brass2).set(17, 15, C.ink);
+  // 튀어나온 연장
+  p.line(7, 8, 9, 0, C.steel3).rect(8, 0, 3, 2, C.steel2);
+  p.line(25, 9, 29, 2, C.brass1).circle(29, 2, 2, C.steel2).set(29, 2, null);
+  p.gear(27, 18, 3, 6, C.brass2, { hole: 1 });
+  return p.outline();
+}
+
+/** 이벤트 — 떠돌이 시계공 */
+function clocksmith(): Pix {
+  const p = new Pix(30, 42);
+  // 등에 멘 태엽 상자
+  p.rect(16, 8, 12, 16, C.brown2).rect(16, 8, 12, 2, C.brown3).gear(22, 16, 4, 6, C.brass2, { hole: 1.2, inner: C.brass1 });
+  // 몸 · 망토
+  p.rect(7, 16, 13, 18, C.brown1).rect(7, 16, 2, 18, C.brown2).rect(6, 30, 15, 4, C.brown1);
+  p.rect(9, 34, 3, 6, C.ink).rect(15, 34, 3, 6, C.ink);
+  // 머리 · 모자 · 수염
+  p.circle(13, 11, 5, C.skin1).rect(7, 3, 12, 3, C.ink).rect(9, 0, 8, 4, C.ink).rect(9, 3, 8, 1, C.brass2);
+  p.rect(9, 13, 9, 5, C.cream).rect(10, 18, 7, 2, C.cream);
+  p.set(11, 10, C.ink).set(15, 10, C.ink).circle(15, 10, 2, null).ring(15, 10, 2, 1, C.brass3).set(15, 10, C.cyan);
+  // 지팡이
+  p.line(4, 14, 4, 40, C.brass1).circle(4, 13, 2, C.brass2);
+  return p.outline();
+}
+
+/** 이벤트 — 마력 샘 */
+function mana_spring(): Pix {
+  const p = new Pix(40, 30);
+  p.ellipse(20, 24, 17, 5, C.steel0).ellipse(20, 23, 14, 3, C.arc1).ellipse(18, 22, 7, 1, C.arc2);
+  p.rect(2, 22, 5, 5, C.steel1).rect(33, 21, 5, 6, C.steel1).rect(9, 26, 4, 3, C.steel1).rect(27, 26, 5, 3, C.steel1);
+  // 솟는 마력 줄기
+  p.rect(18, 6, 4, 16, C.arc2).rect(19, 3, 2, 4, C.arc3).rect(19, 8, 1, 12, C.arc3);
+  for (const [x, y] of [[12, 8], [27, 6], [9, 15], [31, 13], [15, 2], [25, 1]]) p.set(x, y, C.arc3).set(x + 1, y, C.arc2);
+  return p.outline();
+}
+
+/** 이벤트 — 태엽 도박기 */
+function slot_machine(): Pix {
+  const p = new Pix(30, 38);
+  p.rect(3, 6, 22, 30, C.copper1).rect(3, 6, 22, 2, C.copper2).rect(3, 34, 22, 2, C.copper0).rect(3, 6, 2, 30, C.copper2);
+  p.rect(5, 1, 18, 6, C.brass1).rect(7, 2, 14, 3, C.red1).set(9, 3, C.glow).set(14, 3, C.glow).set(19, 3, C.glow);
+  p.rect(6, 11, 16, 9, C.ink);
+  for (const x of [7, 12, 17]) p.rect(x, 12, 4, 7, C.cream).gear(x + 2, 15, 1.5, 5, C.brass1);
+  p.rect(8, 24, 12, 3, C.ink).rect(10, 25, 8, 1, C.brass2);
+  p.rect(26, 12, 2, 12, C.steel2).circle(27, 11, 2, C.red2);
+  return p.outline();
+}
+
 const SPRITES: Record<string, () => Pix> = {
   ...ENEMY_SPRITES,
-  boiler, bigGear,
+  boiler, bigGear, toolbox, clocksmith, mana_spring, slot_machine,
 };
 
 export function spriteImg(key: string, scale = 4, cls = ''): string {
@@ -234,7 +288,100 @@ const ICONS: Record<string, () => Pix> = {
     p.rect(3, 2, 6, 9, C.copper1).spike(6, 0, 3, C.copper2).rect(5, 5, 2, 2, C.glow).rect(2, 10, 8, 1, C.copper0);
     return p.outline();
   },
+  coin: () => {
+    const p = new Pix(11, 11);
+    p.circle(5, 5, 4.6, C.brass2).ring(5, 5, 4.6, 1, C.brass1).rect(4, 3, 3, 5, C.brass3).rect(5, 4, 1, 3, C.brass1);
+    return p.outline();
+  },
+  // ── 지도 방 ──
+  roomCombat: () => {
+    const p = new Pix(14, 14);
+    p.line(2, 11, 10, 3, C.steel3).line(3, 11, 11, 3, C.white).set(11, 2, C.white);
+    p.line(11, 11, 3, 3, C.steel2).line(12, 11, 4, 3, C.steel3).set(3, 2, C.steel3);
+    p.rect(1, 10, 3, 3, C.brass1).rect(10, 10, 3, 3, C.brass1);
+    return p.outline();
+  },
+  roomElite: () => new Pix(15, 14).grid(1, 1, [
+    'h.........h',
+    'hh.sssss.hh',
+    '.hsssssssh.',
+    '.sssssssss.',
+    '.srrsssrrs.',
+    '.srrsssrrs.',
+    '.sssssssss.',
+    '..sss.sss..',
+    '..sdsdsds..',
+    '...sssss...',
+  ], { h: C.red1, s: C.steel3, r: C.red2, d: C.ink }).outline(),
+  roomRest: () => {
+    const p = new Pix(14, 14);
+    p.rect(2, 11, 10, 2, C.brown2).line(2, 12, 11, 9, C.brown3);
+    p.ellipse(7, 8, 3, 3, C.heat).spike(7, 2, 5, C.heat).ellipse(7, 9, 1.5, 1.5, C.glow);
+    return p.outline();
+  },
+  roomShop: () => {
+    const p = new Pix(14, 14);
+    p.rect(2, 5, 10, 8, C.brown3).rect(2, 5, 10, 2, C.brass1).rect(4, 2, 6, 4, null).strokeRect(4, 2, 6, 4, C.brass2);
+    p.circle(7, 9, 2.2, C.brass2).rect(6, 8, 2, 2, C.brass3);
+    return p.outline();
+  },
+  roomEvent: () => new Pix(12, 14).grid(1, 1, [
+    '..aaaa..',
+    '.aa..aa.',
+    '.aa..aa.',
+    '....aa..',
+    '...aa...',
+    '...aa...',
+    '........',
+    '...aa...',
+    '...aa...',
+  ], { a: C.arc3 }).outline(),
+  roomTreasure: () => {
+    const p = new Pix(15, 13);
+    p.rect(1, 5, 13, 7, C.brown3).rect(1, 2, 13, 4, C.brown2).rect(1, 2, 13, 1, C.brown3);
+    p.rect(1, 5, 13, 1, C.brass2).rect(3, 2, 1, 10, C.brass1).rect(11, 2, 1, 10, C.brass1).rect(6, 5, 3, 3, C.brass3).set(7, 6, C.ink);
+    return p.outline();
+  },
+  roomBoss: () => {
+    const p = new Pix(18, 18);
+    p.circle(9, 9, 8, C.brass1).circle(9, 9, 6.5, C.cream);
+    for (let i = 0; i < 12; i++) {
+      const a = (i * Math.PI) / 6;
+      p.set(9 + Math.cos(a) * 5.5, 9 + Math.sin(a) * 5.5, C.brown2);
+    }
+    p.line(9, 9, 9, 4, C.ink).line(9, 9, 12, 11, C.red1).set(9, 9, C.red2);
+    return p.outline();
+  },
 };
+
+/** 모듈 아이콘 — 모양은 id로, 색은 계열(tone)로 정한다 */
+const TONES: Record<string, [string, string, string]> = {
+  copper: [C.copper0, C.copper2, C.copper3],
+  steel: [C.steel1, C.steel2, C.steel3],
+  brass: [C.brass1, C.brass2, C.brass3],
+  arcane: [C.arc1, C.arc2, C.arc3],
+};
+
+export function moduleImg(id: string, tone: string, scale = 2, cls = ''): string {
+  const s = bake(`module:${id}`, () => {
+    const [dark, mid, light] = TONES[tone] ?? TONES.brass;
+    const p = new Pix(16, 16);
+    const shape = [...id].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % 4;
+    if (shape === 0) p.gear(8, 8, 6, 8, mid, { hole: 0, inner: dark }).circle(8, 8, 2.5, light).set(7, 7, C.white);
+    else if (shape === 1) {
+      p.rect(2, 3, 12, 10, dark).rect(3, 4, 10, 8, mid).rect(3, 4, 10, 1, light);
+      for (const [x, y] of [[3, 4], [12, 4], [3, 11], [12, 11]]) p.set(x, y, C.steel3);
+      p.circle(8, 8, 2, light).set(8, 8, C.white);
+    } else if (shape === 2) {
+      p.rect(4, 2, 8, 12, mid).rect(4, 2, 2, 12, light).rect(11, 2, 1, 12, dark).rect(3, 2, 10, 2, C.brass2).rect(3, 12, 10, 2, C.brass2);
+      p.rect(7, 6, 2, 4, C.white);
+    } else {
+      p.circle(8, 8, 6, dark).ring(8, 8, 6, 1, mid).ring(8, 8, 3.5, 1, light).circle(8, 8, 1.5, C.white);
+    }
+    return p.outline();
+  });
+  return `<img class="px icon module-icon ${cls}" src="${s.url}" width="${s.w * scale}" height="${s.h * scale}" alt="">`;
+}
 
 export function iconImg(key: keyof typeof ICONS | string, scale = 2, cls = ''): string {
   const s = bake(`icon:${key}`, ICONS[key]);

@@ -47,6 +47,11 @@ export interface CombatSetup {
   /** 캐릭터 필살기와 이번 전투에서 쓸 수 있는지 */
   skill?: SkillDef;
   skillReady?: boolean;
+  /** 모듈 효과 — 전투 시작 방어도, 모든 적에게 거는 상태, 첫 턴 추가 드로우 · 증기압 */
+  startBlock?: number;
+  enemyStatuses?: Statuses;
+  firstTurnDraw?: number;
+  firstTurnSteam?: number;
 }
 
 export function createCombat(setup: CombatSetup): CombatState {
@@ -81,8 +86,15 @@ export function createCombat(setup: CombatSetup): CombatState {
     skillReady: !!setup.skill && (setup.skillReady ?? true),
     skillUsed: false,
   };
-  for (const enemy of enemies) chooseNextMove(state, enemy);
+  for (const enemy of enemies) {
+    chooseNextMove(state, enemy);
+    for (const [id, n] of Object.entries(setup.enemyStatuses ?? {}) as [StatusId, number][])
+      enemy.statuses[id] = (enemy.statuses[id] ?? 0) + n;
+  }
   startPlayerTurn(state);
+  if (setup.firstTurnDraw) drawCards(state, setup.firstTurnDraw, false);
+  state.player.steam += setup.firstTurnSteam ?? 0;
+  state.player.block += setup.startBlock ?? 0;
   return state;
 }
 

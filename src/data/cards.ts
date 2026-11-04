@@ -208,6 +208,117 @@ const CARD_LIST: CardDef[] = [
     text: '사용할 수 없음.\n고장으로 생긴 불량 부품.', effects: [] },
 ];
 
-export const CARDS: Record<string, CardDef> = Object.fromEntries(CARD_LIST.map((c) => [c.id, c]));
+// ── 정비(강화) ──
+// 강화된 카드는 id 끝에 +가 붙은 별도 카드다. 덱에서는 defId만 바꾸면 된다.
+type Upgrade = Partial<Pick<CardDef, 'cost' | 'text' | 'effects' | 'mesh' | 'exhaust'>>;
+const vuln = (n: number, target: 'enemy' | 'allEnemies' = 'enemy') => status('vulnerable', n, target);
+const UPGRADES: Record<string, Upgrade> = {
+  cog_strike: { text: '피해 9.', effects: [dmg(9)] },
+  brass_guard: { text: '방어도 8.', effects: [block(8)] },
+  steam_jet: { text: '피해 7.\n맞물림(태엽): 방어도 6.', effects: [dmg(7)], mesh: { after: 'gear', effects: [block(6)] } },
+  wind_up: { text: '회전 +3.\n카드 1장 드로우.', effects: [wind(3), draw(1)] },
+  poker_jab: { text: '피해 8.\n화상 7.', effects: [dmg(8), status('burn', 7, 'enemy')] },
+  load_shell: { text: '방어도 8.\n압력 +7.', effects: [block(8), status('pressure', 7, 'self')] },
+  spiked_guard: { text: '방어도 9.\n가시 +2.', effects: [block(9), status('thorns', 2, 'self')] },
+  spark_plug: { text: '피해 10.\n과열 +2.', effects: [dmg(10), heat(2)] },
+
+  linked_cogs: { text: '피해 6.\n회전마다 피해 +3.', effects: [dmg(6, { perRotation: 3 })] },
+  chain_drive: { text: '피해 4를 2회.\n연동마다 피해 +3.', effects: [dmg(4, { times: 2, perChain: 3 })] },
+  piston: { text: '피해 15.\n맞물림(태엽): 피해 8.', effects: [dmg(15)], mesh: { after: 'gear', effects: [dmg(8)] } },
+  pressure_release: { text: '방어도 11.\n과열 -4.', effects: [block(11), heat(-4)] },
+  coolant: { text: '과열 -8.\n소멸.', effects: [heat(-8)] },
+  arcane_ignite: { text: '피해 10.\n맞물림(증기): 부식 3.', effects: [dmg(10)], mesh: { after: 'steam', effects: [vuln(3)] } },
+  rune_circuit: { text: '카드 3장 드로우.\n맞물림(마력): 증기압 +1.', effects: [draw(3)] },
+
+  overload_strike: { text: '피해 14.\n과열 +4.', effects: [dmg(14), heat(4)] },
+  gear_storm: { text: '모든 적에게 피해 8.\n회전마다 피해 +2.', effects: [{ kind: 'damageAll', amount: 8, perRotation: 2 }] },
+  rust_hex: { text: '적에게 녹 3, 부식 3.', effects: [status('weak', 3, 'enemy'), vuln(3)] },
+  flywheel: { cost: 0 },
+  turbocharger: { text: '출력 +3.', effects: [status('strength', 3, 'self')] },
+
+  grand_clock: { text: '피해 10.\n회전마다 피해 +5.', effects: [dmg(10, { perRotation: 5 })] },
+  time_reverse: { text: '방어도 14.\n회전 +3.\n카드 2장 드로우.', effects: [block(14), wind(3), draw(2)] },
+  mana_amplifier: { cost: 1 },
+
+  scald: { text: '피해 8.\n화상 6.', effects: [dmg(8), status('burn', 6, 'enemy')] },
+  boiling_pipe: { text: '모든 적에게 화상 11.', effects: [status('burn', 11, 'allEnemies')] },
+  heat_wave: { text: '모든 적에게 피해 9,\n화상 8.', effects: [{ kind: 'damageAll', amount: 9 }, status('burn', 8, 'allEnemies')] },
+  combustion: { text: '대상의 화상 3배만큼\n즉시 피해.\n(방어도 무시)', effects: [{ kind: 'detonate', statuses: ['burn'], factor: 3 }] },
+  rekindle: { text: '대상의 화상 3배.\n소멸.', effects: [{ kind: 'multiplyStatus', status: 'burn', factor: 3, target: 'enemy' }] },
+  furnace: { cost: 1 },
+
+  acid_flask: { text: '피해 8.\n산성 4.', effects: [dmg(8), status('acid', 4, 'enemy')] },
+  acid_spray: { text: '모든 적에게 산성 4.', effects: [status('acid', 4, 'allEnemies')] },
+  dissolve: { text: '피해 7.\n대상의 산성 1당\n피해 +5.', effects: [dmg(7, { perTargetStatus: { status: 'acid', amount: 5 } })] },
+  acid_catalyst: { text: '대상의 산성 3배.\n소멸.', effects: [{ kind: 'multiplyStatus', status: 'acid', factor: 3, target: 'enemy' }] },
+  acid_pump: { cost: 1 },
+
+  tesla_coil: { text: '감전 7.\n피해 4를 2회.', effects: [status('shock', 7, 'enemy'), dmg(4, { times: 2 })] },
+  static_charge: { text: '감전 8.', effects: [status('shock', 8, 'enemy')] },
+  arc_lash: { text: '피해 2를 7회.', effects: [dmg(2, { times: 7 })] },
+  storm_generator: { cost: 1 },
+
+  chain_reaction: { cost: 0 },
+  total_detonation: { cost: 0 },
+
+  charge_pressure: { text: '압력 +11.\n카드 1장 드로우.', effects: [status('pressure', 11, 'self'), draw(1)] },
+  valve_lock: { text: '방어도 11.\n압력 +8.', effects: [block(11), status('pressure', 8, 'self')] },
+  steam_cannon: { text: '피해 16.\n압력 1당 피해 +3.\n압력을 모두 소모.',
+    effects: [dmg(16, { perPressure: 3 }), { kind: 'clearStatus', status: 'pressure' }] },
+  double_compress: { text: '압력 2배.', effects: [{ kind: 'multiplyStatus', status: 'pressure', factor: 2, target: 'self' }] },
+  compressor: { text: '매 턴 시작 시\n압력 +7.', effects: [status('compressor', 7, 'self')] },
+  steam_ram: { text: '피해 26.\n압력 1당 피해 +5.\n압력을 모두 소모.',
+    effects: [dmg(26, { perPressure: 5 }), { kind: 'clearStatus', status: 'pressure' }] },
+  gauge_strike: { text: '피해 9.\n압력 1당 피해 +1.\n(압력은 그대로)', effects: [dmg(9, { perPressure: 1 })] },
+  overpressure: { text: '압력 +18.\n과열 +3.', effects: [status('pressure', 18, 'self'), heat(3)] },
+  residual_valve: { cost: 0 },
+
+  rapid_cog: { text: '피해 5.\n카드 1장 드로우.', effects: [dmg(5), draw(1)] },
+  gear_magazine: { text: '카드 4장 드로우.', effects: [draw(4)] },
+  high_gear: { text: '회전 +2.\n카드 2장 드로우.\n소멸.', effects: [wind(2), draw(2)] },
+  cog_barrage: { text: '피해 3을 1회.\n회전마다 1회 추가.', effects: [dmg(3, { hitsPerRotation: 1 })] },
+  autoloader: { cost: 0 },
+  endless_spring: { cost: 1 },
+
+  heat_release: { text: '피해 8.\n과열 1당 피해 +3.', effects: [dmg(8, { perHeat: 3 })] },
+  critical_boost: { text: '증기압 +2.\n과열 +4.\n카드 2장 드로우.', effects: [{ kind: 'steam', amount: 2 }, heat(4), draw(2)] },
+  coolant_cycle: { text: '과열을 모두 없애고\n없앤 과열 1당\n방어도 4.', effects: [{ kind: 'vent', blockPerHeat: 4 }] },
+  heatsink: { text: '과열이 오를 때마다\n방어도 +6.', effects: [status('heatsink', 6, 'self')] },
+  meltdown_engine: { text: '고장 나면 피해를 받는\n대신 모든 적에게\n피해 32.', effects: [status('meltdown', 32, 'self')] },
+  thermal_lance: { text: '피해 12.\n과열 1당 피해 +4.\n과열을 모두 없앤다.', effects: [dmg(12, { perHeat: 4 }), { kind: 'vent', blockPerHeat: 0 }] },
+  exhaust_blast: { text: '모든 적에게 피해 6.\n과열 1당 피해 +2.', effects: [{ kind: 'damageAll', amount: 6, perHeat: 2 }] },
+  afterburner: { text: '과열 +3.\n카드 3장 드로우.', effects: [heat(3), draw(3)] },
+  redline: { text: '과열이 한계의 절반\n이상이면 주는 피해 +6.', effects: [status('redline', 6, 'self')] },
+
+  iron_wall: { text: '방어도 21.', effects: [block(21)] },
+  counter_stance: { text: '방어도 8.\n가시 +3.', effects: [block(8), status('thorns', 3, 'self')] },
+  shield_bash: { cost: 0 },
+  spike_armor: { text: '가시 6.\n(공격받을 때마다\n공격자에게 피해)', effects: [status('thorns', 6, 'self')] },
+  steam_barrier: { cost: 1 },
+
+  hand_throw: { text: '피해 5를 2회.\n부식 2.', effects: [dmg(5, { times: 2 }), vuln(2)] },
+  rust_mist: { text: '모든 적에게 녹 3.', effects: [status('weak', 3, 'allEnemies')] },
+  ether_drain: { text: '피해 15.\n입힌 피해만큼 회복.', effects: [dmg(15, { lifesteal: true })] },
+  overload_circuit: { text: '카드 4장 드로우.\n녹슨 부품 1장을\n버린 더미에 추가.', effects: [draw(4), { kind: 'addCard', cardId: 'rusted_part', count: 1 }] },
+  time_stop: { cost: 1 },
+};
+
+const UPGRADED_LIST: CardDef[] = CARD_LIST.filter((c) => UPGRADES[c.id]).map((c) => ({
+  ...c,
+  ...UPGRADES[c.id],
+  // 맞물림 효과만 바꾸는 경우 조건(after)은 원래 카드를 따른다
+  mesh: UPGRADES[c.id].mesh ?? c.mesh,
+  id: `${c.id}+`,
+  name: `${c.name}+`,
+  upgraded: true,
+}));
+
+export const CARDS: Record<string, CardDef> = Object.fromEntries([...CARD_LIST, ...UPGRADED_LIST].map((c) => [c.id, c]));
 
 export const REWARD_POOL = CARD_LIST.filter((c) => c.rarity !== 'starter');
+
+/** 강화 표시(+)를 뗀 원래 카드 id — 그림 · 연출은 원래 카드 것을 쓴다 */
+export const baseCardId = (id: string): string => (id.endsWith('+') ? id.slice(0, -1) : id);
+
+/** 정비로 강화할 수 있는 카드인지 (이미 강화됐거나 불량 카드면 불가) */
+export const canUpgradeCard = (id: string): boolean => !id.endsWith('+') && !!CARDS[`${id}+`];

@@ -2,15 +2,20 @@ import 'galmuri/dist/galmuri.css';
 import './style.css';
 import { aliveEnemies, cardDef, endTurn, needsTarget, playCard, useSkill } from './core/combat';
 import {
-  addCard, createRun, currentFloor, enterAct, removeCard, rest, rollCardRewards, settleSkill, startCustomCombat, startFloorCombat,
-  type CombatTier, type RunState,
+  advanceAct, buyShopItem, chooseEvent, claimCombatSpoils, createRun, createShop, currentNode, enterAct, isFinalAct, moveTo,
+  openTreasure, removeCard, rest, rewardChoiceCount, rollCardRewards, rollEvent, ROOM_TIER, settleSkill, shopRemove,
+  startCustomCombat, startRoomCombat, upgradeCard, addCard,
+  type CombatSpoils, type CombatTier, type EventResult, type RunState, type ShopStock,
 } from './core/run';
+import { clearSave, loadGame, saveGame } from './core/save';
+import { CARDS } from './data/cards';
 import type { CombatEvent, CombatState, UnitRef } from './core/types';
 import type { DevApi } from './dev/panel';
 import { playEvents, preloadFx, type UnitSnapshot } from './ui/effects';
 import {
-  renderActStart, renderCombat, renderEnd, renderPileOverlay, renderRest, renderReward, renderSelect, renderTitle,
-  type PileKind,
+  renderActStart, renderCombat, renderDeckPick, renderEnd, renderEvent, renderMap, renderPileOverlay, renderRest, renderReward,
+  renderSelect, renderShop, renderTitle, renderTreasure,
+  type PileKind, type RestMode,
 } from './ui/render';
 import { playMusic, setVolume, sfx, toggle, unlock, type MusicId } from './ui/sound';
 import { installCardFrames } from './ui/card-frame';
@@ -20,10 +25,15 @@ import { hideTooltip, installTooltips } from './ui/tooltip';
 type Screen =
   | { kind: 'title' }
   | { kind: 'select' }
+  | { kind: 'map' }
   | { kind: 'combat'; combat: CombatState }
-  | { kind: 'reward'; options: string[]; tier: CombatTier; rerolled: boolean }
-  /** removing: 분해할 카드를 고르는 중 */
-  | { kind: 'rest'; removing: boolean }
+  | { kind: 'reward'; options: string[]; tier: CombatTier; rerolled: boolean; spoils: CombatSpoils }
+  | { kind: 'rest'; mode: RestMode }
+  /** removing: 분해 서비스로 카드를 고르는 중 */
+  | { kind: 'shop'; shop: ShopStock; removing: boolean }
+  /** picking: 선택 결과로 덱에서 카드를 고르는 중 */
+  | { kind: 'event'; id: string; result: EventResult | null; picking: 'upgrade' | 'remove' | null }
+  | { kind: 'treasure'; loot: { module: string | null; gold: number } }
   | { kind: 'actStart' }
   | { kind: 'end'; won: boolean };
 
@@ -50,10 +60,9 @@ function pileCards(pile: PileKind): string[] {
 /** 화면에 맞는 배경음 */
 function screenMusic(): MusicId {
   if (screen.kind === 'title' || screen.kind === 'select' || screen.kind === 'end') return 'title';
-  if (screen.kind === 'rest' || screen.kind === 'actStart') return 'rest';
-  const floor = run && run.floor < run.floors.length ? currentFloor(run) : null;
-  if (floor?.kind === 'combat' && floor.tier === 'boss') return 'boss';
-  return (['act0', 'act1', 'act2'] as const)[floor?.act ?? 0];
+  if (screen.kind === 'rest' || screen.kind === 'actStart' || screen.kind === 'shop' || screen.kind === 'treasure') return 'rest';
+  if (screen.kind === 'combat' && run && currentNode(run)?.kind === 'boss') return 'boss';
+  return (['act0', 'act1', 'act2'] as const)[Math.min(2, run?.act ?? 0)];
 }
 
 /** 개발자 패널이 걸어 두는 훅 — 행동 직후(치트 적용)와 화면을 그린 뒤(패널 갱신) */
@@ -64,14 +73,69 @@ function render(): void {
   hideTooltip();
   renderScreen();
   if (overlay) root.insertAdjacentHTML('beforeend', renderPileOverlay(overlay, pileCards(overlay)));
+  if (screen.kind === 'map') scrollMap();
   playMusic(screenMusic());
+  persist();
   devAfterRender?.();
+}
+
+/** 화면이 바뀔 때마다 자동 저장. 런이 끝나면 저장을 지운다 */
+function persist(): void {
+  if (!run) return;
+  if (screen.kind === 'end') clearSave();
+  else if (screen.kind !== 'title' && screen.kind !== 'select') saveGame(run, screen);
+}
+
+/** 지도를 지금 위치(없으면 갈 수 있는 방)가 보이게 스크롤한다 */
+function scrollMap(): void {
+  const box = root.querySelector<HTMLElement>('[data-map-scroll]');
+  const focus = root.querySelector<HTMLElement>('.map-node.current') ?? root.querySelector<HTMLElement>('.map-node.reachable');
+  if (box && focus) box.scrollTop = focus.offsetTop - box.clientHeight * 0.55;
+}
+
+function saveSummary() {
+  const data = loadGame<Screen>();
+  if (!data) return null;
+  const { run: r } = data;
+  return { char: r.character, act: r.act, floor: r.node === null ? 0 : r.map[r.node].row + 1, hp: r.hp, maxHp: r.maxHp };
+}
+
+/** 저장된 런을 불러온다. 전투가 끝난 직후에 저장됐다면 결과 처리부터 한다 */
+function continueRun(): void {
+  const data = loadGame<Screen>();
+  if (!data) {
+    screen = { kind: 'title' };
+    return;
+  }
+  run = data.run;
+  screen = data.screen;
+  selectedUid = null;
+  skillTargeting = false;
+  overlay = null;
+  if (screen.kind === 'combat') {
+    // 런과 전투는 같은 난수 생성기를 쓴다
+    screen.combat.rng = run.rng;
+    screen.combat.events = [];
+    if (screen.combat.outcome !== 'ongoing') afterCombatAction(screen.combat);
+  }
 }
 
 function renderScreen(): void {
   switch (screen.kind) {
     case 'title':
-      root.innerHTML = renderTitle();
+      root.innerHTML = renderTitle(saveSummary());
+      return;
+    case 'map':
+      root.innerHTML = renderMap(run!);
+      return;
+    case 'shop':
+      root.innerHTML = renderShop(run!, screen.shop, screen.removing);
+      return;
+    case 'event':
+      root.innerHTML = screen.picking ? renderDeckPick(run!, screen.picking, null) : renderEvent(run!, screen);
+      return;
+    case 'treasure':
+      root.innerHTML = renderTreasure(run!, screen.loot);
       return;
     case 'select':
       root.innerHTML = renderSelect();
@@ -80,13 +144,13 @@ function renderScreen(): void {
       root.innerHTML = renderCombat(run!, screen.combat, selectedUid, skillTargeting, dying, fresh);
       return;
     case 'reward':
-      root.innerHTML = renderReward(run!, screen.options, screen.rerolled);
+      root.innerHTML = renderReward(run!, screen.options, screen.rerolled, screen.spoils);
       return;
     case 'actStart':
       root.innerHTML = renderActStart(run!);
       return;
     case 'rest':
-      root.innerHTML = renderRest(run!, screen.removing);
+      root.innerHTML = renderRest(run!, screen.mode);
       return;
     case 'end':
       root.innerHTML = renderEnd(run!, screen.won);
@@ -94,21 +158,45 @@ function renderScreen(): void {
   }
 }
 
-function enterFloor(): void {
+/** 지도에서 고른 방으로 들어간다 */
+function enterRoom(nodeId: number, force = false): void {
   if (!run) return;
-  if (run.floor >= run.floors.length) {
-    screen = { kind: 'end', won: true };
-    return;
+  if (force && run.map[nodeId]) {
+    run.node = nodeId;
+    run.visited.push(nodeId);
   }
-  const floor = currentFloor(run);
-  if (floor.kind === 'rest') screen = { kind: 'rest', removing: false };
-  else if (floor.kind === 'actStart') screen = { kind: 'actStart' };
-  else screen = { kind: 'combat', combat: startFloorCombat(run) };
+  const node = force ? run.map[nodeId] : moveTo(run, nodeId);
+  if (!node) return;
+  switch (node.kind) {
+    case 'combat':
+    case 'elite':
+    case 'boss':
+      screen = { kind: 'combat', combat: startRoomCombat(run) };
+      return;
+    case 'rest':
+      screen = { kind: 'rest', mode: 'menu' };
+      return;
+    case 'shop':
+      screen = { kind: 'shop', shop: createShop(run), removing: false };
+      return;
+    case 'event':
+      screen = { kind: 'event', id: rollEvent(run), result: null, picking: null };
+      return;
+    case 'treasure':
+      sfx('reward');
+      screen = { kind: 'treasure', loot: openTreasure(run) };
+      return;
+  }
 }
 
-function nextFloor(): void {
-  run!.floor += 1;
-  enterFloor();
+/** 방을 마치고 지도로. 보스 방이었다면 다음 구역 입구로 */
+function leaveRoom(): void {
+  if (!run) return;
+  overlay = null;
+  if (currentNode(run)?.kind === 'boss') {
+    advanceAct(run);
+    screen = { kind: 'actStart' };
+  } else screen = { kind: 'map' };
 }
 
 function afterCombatAction(combat: CombatState): void {
@@ -117,19 +205,41 @@ function afterCombatAction(combat: CombatState): void {
   run.hp = combat.player.hp;
   settleSkill(run, combat);
   selectedUid = null;
-  const floor = currentFloor(run);
   overlay = null;
+  const node = currentNode(run);
   if (combat.outcome === 'lost') {
     sfx('defeat');
     screen = { kind: 'end', won: false };
-  } else if (run.floor === run.floors.length - 1) {
+  } else if (node?.kind === 'boss' && isFinalAct(run)) {
     sfx('victory');
-    run.floor += 1;
     screen = { kind: 'end', won: true };
   } else {
     sfx('victory');
-    const tier = floor.kind === 'combat' ? floor.tier : 'normal';
-    screen = { kind: 'reward', options: rollCardRewards(run, tier), tier, rerolled: false };
+    const tier = (node && ROOM_TIER[node.kind]) ?? 'normal';
+    const spoils = claimCombatSpoils(run, tier);
+    screen = { kind: 'reward', options: rollCardRewards(run, tier, rewardChoiceCount(run)), tier, rerolled: false, spoils };
+  }
+}
+
+/** 덱에서 카드를 골랐을 때 — 정비소 · 상점 · 사건 중 어디서 골랐는지에 따라 */
+function onPickCard(uid: number): void {
+  if (!run) return;
+  if (screen.kind === 'rest' && screen.mode !== 'menu') {
+    const ok = screen.mode === 'upgrade' ? upgradeCard(run, uid) : removeCard(run, uid);
+    if (!ok) return;
+    sfx(screen.mode === 'upgrade' ? 'reward' : 'remove');
+    leaveRoom();
+  } else if (screen.kind === 'shop' && screen.removing) {
+    if (!shopRemove(run, screen.shop, uid)) return;
+    sfx('remove');
+    screen = { ...screen, removing: false };
+  } else if (screen.kind === 'event' && screen.picking && screen.result) {
+    const before = run.deck.find((c) => c.uid === uid)?.defId;
+    const ok = screen.picking === 'upgrade' ? upgradeCard(run, uid) : removeCard(run, uid);
+    if (!ok || !before) return;
+    sfx(screen.picking === 'upgrade' ? 'reward' : 'remove');
+    const line = screen.picking === 'upgrade' ? `강화: ${CARDS[`${before}+`].name}` : `제거: ${CARDS[before].name}`;
+    screen = { ...screen, picking: null, result: { ...screen.result, lines: [...screen.result.lines, line] } };
   }
 }
 
@@ -164,9 +274,19 @@ function handle(action: string, data: DOMStringMap): void {
     case 'restart':
       screen = { kind: 'select' };
       return;
+    case 'continue':
+      continueRun();
+      return;
     case 'choose':
       run = createRun(Date.now() % 1_000_000, data.char);
-      enterFloor();
+      screen = { kind: 'map' };
+      return;
+    case 'go-node':
+      sfx('cardGear');
+      enterRoom(Number(data.node));
+      return;
+    case 'leave':
+      leaveRoom();
       return;
     case 'play':
       if (screen.kind === 'combat') onCardClick(screen.combat, Number(data.uid));
@@ -195,38 +315,58 @@ function handle(action: string, data: DOMStringMap): void {
       }
       break;
     case 'pick':
+      if (screen.kind !== 'reward') return;
       sfx('reward');
       addCard(run!, data.card!);
-      nextFloor();
+      leaveRoom();
       return;
     case 'skip':
-      nextFloor();
+      if (screen.kind === 'reward') leaveRoom();
       return;
     case 'reroll':
       sfx('cardGear');
       // 보상 화면마다 한 번, 지금 보이는 카드는 빼고 다시 뽑는다
       if (screen.kind === 'reward' && !screen.rerolled)
-        screen = { ...screen, options: rollCardRewards(run!, screen.tier, 3, screen.options), rerolled: true };
+        screen = { ...screen, options: rollCardRewards(run!, screen.tier, screen.options.length, screen.options), rerolled: true };
       return;
     case 'enter-act':
       enterAct(run!);
-      nextFloor();
+      screen = { kind: 'map' };
       return;
     case 'rest':
       sfx('rest');
       rest(run!);
-      nextFloor();
+      leaveRoom();
       return;
-    case 'remove-menu':
-    case 'remove-back':
-      if (screen.kind === 'rest') screen = { kind: 'rest', removing: action === 'remove-menu' };
+    case 'rest-upgrade':
+    case 'rest-remove':
+    case 'rest-back':
+      if (screen.kind === 'rest')
+        screen = { kind: 'rest', mode: action === 'rest-upgrade' ? 'upgrade' : action === 'rest-remove' ? 'remove' : 'menu' };
       return;
-    case 'remove':
-      if (removeCard(run!, Number(data.uid))) {
-        sfx('remove');
-        nextFloor();
-      }
+    case 'pick-card':
+      onPickCard(Number(data.uid));
       return;
+    case 'buy-card':
+    case 'buy-module': {
+      if (screen.kind !== 'shop') return;
+      const list = action === 'buy-card' ? screen.shop.cards : screen.shop.modules;
+      const item = list[Number(data.index)];
+      if (item && buyShopItem(run!, item, action === 'buy-card' ? 'card' : 'module')) sfx('reward');
+      return;
+    }
+    case 'shop-remove':
+    case 'shop-back':
+      if (screen.kind === 'shop') screen = { ...screen, removing: action === 'shop-remove' };
+      return;
+    case 'event-choice': {
+      if (screen.kind !== 'event' || screen.result) return;
+      const result = chooseEvent(run!, screen.id, Number(data.index));
+      if (!result) return;
+      sfx('reward');
+      screen = { ...screen, result, picking: result.pick ?? null };
+      return;
+    }
   }
 }
 
@@ -351,18 +491,30 @@ if (import.meta.env.DEV || new URLSearchParams(location.search).has('dev')) {
       switch (target) {
         case 'title': screen = { kind: 'title' }; break;
         case 'select': screen = { kind: 'select' }; break;
+        case 'map': screen = { kind: 'map' }; break;
         case 'reward': {
           const tier = (arg as CombatTier) ?? 'normal';
-          screen = { kind: 'reward', options: rollCardRewards(run, tier), tier, rerolled: false };
+          const spoils = claimCombatSpoils(run, tier);
+          screen = { kind: 'reward', options: rollCardRewards(run, tier, rewardChoiceCount(run)), tier, rerolled: false, spoils };
           break;
         }
-        case 'rest': screen = { kind: 'rest', removing: false }; break;
+        case 'rest': screen = { kind: 'rest', mode: 'menu' }; break;
+        case 'shop': screen = { kind: 'shop', shop: createShop(run), removing: false }; break;
+        case 'event': screen = { kind: 'event', id: String(arg ?? rollEvent(run)), result: null, picking: null }; break;
+        case 'treasure': screen = { kind: 'treasure', loot: openTreasure(run) }; break;
         case 'actStart': screen = { kind: 'actStart' }; break;
         case 'won': screen = { kind: 'end', won: true }; break;
         case 'lost': screen = { kind: 'end', won: false }; break;
-        case 'floor':
-          run.floor = Math.max(0, Math.min(run.floors.length - 1, Number(arg)));
-          enterFloor();
+        case 'act': {
+          // 정한 구역의 새 지도 맨 아래로
+          run.act = Math.max(0, Math.min(2, Number(arg)) - 1);
+          advanceAct(run);
+          screen = { kind: 'map' };
+          break;
+        }
+        case 'node':
+          // 갈 수 있는지 따지지 않고 그 방으로 들어간다
+          enterRoom(Number(arg), true);
           break;
       }
       void act(() => {});
@@ -384,25 +536,6 @@ if (import.meta.env.DEV || new URLSearchParams(location.search).has('dev')) {
     },
   };
   void import('./dev/panel').then((m) => m.installDevPanel(api));
-}
-
-// 개발용: ?floor=N 으로 해당 층에서 바로 시작
-// (&seed= 시드 고정, &char=캐릭터id, &deck=카드id,카드id 덱 지정, &screen=reward|end 화면 확인)
-if (import.meta.env.DEV) {
-  const params = new URLSearchParams(location.search);
-  if (params.has('floor')) {
-    run = createRun(Number(params.get('seed') ?? 1), params.get('char') ?? undefined);
-    run.floor = Number(params.get('floor'));
-    const deck = params.get('deck');
-    if (deck) {
-      run.deck = [];
-      for (const id of deck.split(',')) addCard(run, id);
-    }
-    enterFloor();
-    const debugScreen = params.get('screen');
-    if (debugScreen === 'reward') screen = { kind: 'reward', options: rollCardRewards(run, 'elite'), tier: 'elite', rerolled: false };
-    if (debugScreen === 'end') screen = { kind: 'end', won: params.get('won') === '1' };
-  }
 }
 
 render();

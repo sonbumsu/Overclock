@@ -1,4 +1,4 @@
-import { CARDS } from '../data/cards';
+import { baseCardId, CARDS } from '../data/cards';
 import { CHARACTERS } from '../data/characters';
 import { HERO_IMAGES } from './sprite-heroes';
 import type { CombatEvent, DotId, UnitRef } from '../core/types';
@@ -388,7 +388,7 @@ function hitFx(ev: Extract<CombatEvent, { kind: 'hit' }>): FxKind {
   if (ev.source !== 'player') return 'impact';
   if (ev.cardId?.startsWith('skill:')) return SKILL_STYLE[ev.cardId.slice(6)]?.hit ?? 'explosion';
   const def = ev.cardId ? CARDS[ev.cardId] : undefined;
-  return (ev.cardId && CARD_FX[ev.cardId]) || FAMILY_FX[def?.family ?? ''] || 'slash';
+  return (ev.cardId && CARD_FX[baseCardId(ev.cardId)]) || FAMILY_FX[def?.family ?? ''] || 'slash';
 }
 
 // ── 연출 조각들 ─────────────────────────────────────
@@ -708,7 +708,7 @@ export async function playEvents(root: HTMLElement, events: CombatEvent[], befor
         if (!el) break;
         const player = unit('player');
         const skillHit = ev.cardId?.startsWith('skill:') ?? false;
-        if (ev.cardId && BEAM_CARDS.has(ev.cardId) && player && !beamed) {
+        if (ev.cardId && BEAM_CARDS.has(baseCardId(ev.cardId)) && player && !beamed) {
           beamed = true;
           sfx('beam');
           beam(stage, host(player), host(el), skillHit ? 'mega' : '');

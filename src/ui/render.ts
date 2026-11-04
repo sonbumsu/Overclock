@@ -1,4 +1,4 @@
-import { CARDS } from '../data/cards';
+import { baseCardId, CARDS } from '../data/cards';
 import {
   aliveEnemies,
   cardDef,
@@ -12,10 +12,14 @@ import {
   type Intent,
 } from '../core/combat';
 import {
-  ACT_MAX_HP_BONUS, canRemoveCard, currentFloor, floorInAct, isFavored, MIN_DECK_SIZE, REST_HEAL_RATIO, runCharacter,
-  SKILL_RECHARGE, type RunState,
+  ACT_MAX_HP_BONUS, canChoose, canRemoveCard, currentNode, floorInAct, isFavored, MIN_DECK_SIZE, reachableNodes, removePrice,
+  restHealAmount, runCharacter, runModules, skillRecharge, SKILL_RECHARGE, upgradableCards,
+  type CombatSpoils, type RunState, type ShopStock,
 } from '../core/run';
+import { MAP_COLS, MAP_ROWS, type MapNode, type RoomKind } from '../core/map';
 import { ACTS } from '../data/acts';
+import { EVENTS } from '../data/events';
+import { MODULES, type ModuleDef } from '../data/modules';
 import { ARCHETYPES } from '../data/archetypes';
 import { CHARACTER_IDS, CHARACTERS } from '../data/characters';
 import type { CardDef, Combatant, CombatState, Family, StatusId } from '../core/types';
@@ -23,7 +27,7 @@ import logoUrl from '../assets/logo.png';
 import { cardArtImg } from './card-art';
 import { cardBackImg } from './card-frame';
 import { settings } from './sound';
-import { backdropURL, iconImg, spriteImg } from './sprites';
+import { backdropURL, iconImg, moduleImg, spriteImg } from './sprites';
 
 const FAMILY_NAME: Record<Family, string> = { gear: '태엽', steam: '증기', arcane: '마력' };
 const TYPE_NAME: Record<CardDef['type'], string> = { attack: '작동부', skill: '방호부', power: '동력부', status: '불량' };
@@ -78,7 +82,7 @@ function keywordTip(text: string): string {
 const ENEMY_SCALE = 3;
 
 /** 현재 구역의 배경 */
-const actBackdrop = (run: RunState) => `style="--backdrop:url(${backdropURL(currentFloor(run)?.act ?? ACTS.length - 1)})"`;
+const actBackdrop = (run: RunState) => `style="--backdrop:url(${backdropURL(Math.min(run.act, ACTS.length - 1))})"`;
 
 function hpBar(c: Combatant): string {
   return `
@@ -119,11 +123,11 @@ function intentHtml(intent: Intent, move: string): string {
 
 export function cardHtml(
   def: CardDef,
-  opts: { uid?: number; action?: string; extraClass?: string; badge?: string; index?: number; total?: number } = {},
+  opts: { uid?: number; action?: string; extraClass?: string; badge?: string; index?: number; total?: number; attrs?: string } = {},
 ): string {
   const family = def.family ?? 'none';
   const attrs = opts.action
-    ? `data-action="${opts.action}" ${opts.uid !== undefined ? `data-uid="${opts.uid}"` : ''} data-card="${def.id}"`
+    ? `data-action="${opts.action}" ${opts.uid !== undefined ? `data-uid="${opts.uid}"` : ''} data-card="${def.id}" ${opts.attrs ?? ''}`
     : '';
   // 손패를 부채꼴로 펼친다
   let fan = '';
@@ -136,17 +140,29 @@ export function cardHtml(
   }
   const keywords = keywordTip(def.text);
   return `
-    <div class="card fam-${family} type-${def.type} rarity-${def.rarity} ${opts.extraClass ?? ''}" ${attrs} ${fan} ${keywords ? tip(`${def.name}\n${keywords}`) : ''}>
+    <div class="card fam-${family} type-${def.type} rarity-${def.rarity} ${def.upgraded ? 'upgraded' : ''} ${opts.extraClass ?? ''}" ${attrs} ${fan} ${keywords ? tip(`${def.name}\n${keywords}`) : ''}>
       <div class="card-cost">${def.cost ?? '×'}</div>
       ${opts.badge ? `<div class="card-badge">${opts.badge}</div>` : ''}
       <div class="card-name">${def.name}</div>
-      <div class="card-art-wrap">${cardArtImg(def.id, def.family, 4)}</div>
+      <div class="card-art-wrap">${cardArtImg(baseCardId(def.id), def.family, 4)}</div>
       <div class="card-meta">${def.family ? FAMILY_NAME[def.family] + ' · ' : ''}${TYPE_NAME[def.type]}</div>
       <div class="card-text"><span>${def.text.replace(KEYWORDS, '<b>$1</b>').replace(/\n/g, '<br>')}</span></div>
     </div>`;
 }
 
-const FLOOR_LABEL = { normal: '전투', elite: '정예', boss: '보스' } as const;
+export const ROOM_INFO: Record<RoomKind, { name: string; icon: string; desc: string }> = {
+  combat: { name: '전투', icon: 'roomCombat', desc: '기계들과 싸운다. 이기면 주화와 카드 보상.' },
+  elite: { name: '정예', icon: 'roomElite', desc: '강한 적. 이기면 모듈과 더 좋은 카드 보상.' },
+  rest: { name: '정비소', icon: 'roomRest', desc: '휴식해서 회복하거나, 카드를 강화 · 분해한다.' },
+  shop: { name: '상점', icon: 'roomShop', desc: '주화로 카드 · 모듈을 사거나 카드를 분해한다.' },
+  event: { name: '사건', icon: 'roomEvent', desc: '무슨 일이 일어날지 모른다.' },
+  treasure: { name: '보물', icon: 'roomTreasure', desc: '모듈이 든 상자.' },
+  boss: { name: '보스', icon: 'roomBoss', desc: '구역의 주인. 쓰러뜨리면 다음 구역으로.' },
+};
+
+export function moduleChip(m: ModuleDef, scale = 2): string {
+  return `<span class="module-chip rarity-${m.rarity}" ${tip(`${m.name}${m.rarity === 'rare' ? ' (희귀)' : ''}\n${m.text}`)}>${moduleImg(m.id, m.tone, scale)}</span>`;
+}
 
 export function soundButtons(): string {
   const control = (kind: 'sfx' | 'music', label: string, vol: number) => `
@@ -158,22 +174,26 @@ export function soundButtons(): string {
 }
 
 function topBar(run: RunState, hp: number): string {
-  const floor = currentFloor(run);
-  const floorLabel = !floor ? '' : floor.kind === 'rest' ? '정비소' : floor.kind === 'actStart' ? '구역 입구' : FLOOR_LABEL[floor.tier];
+  const node = currentNode(run);
+  const floorLabel = node ? ROOM_INFO[node.kind].name : '구역 입구';
   const { act, index, total } = floorInAct(run);
+  const mods = runModules(run);
   return `
     <header class="topbar">
       <span class="logo-small">${iconImg('gear', 2)}오버클록</span>
       <span class="tb-item act-name">${act + 1}구역 · ${ACTS[act].name.split(' — ')[1]}</span>
       <span class="tb-item">${iconImg('floor', 2)}${index > 0 ? `${index}/${total}층 ` : ''}<em>${floorLabel}</em></span>
       <span class="tb-item" ${tip(`체력\n${runCharacter(run).name} · ${runCharacter(run).passive.name}: ${runCharacter(run).passive.text}`)}>${iconImg('heart', 2)}${hp}/${run.maxHp}</span>
+      <span class="tb-item gold" ${tip('주화\n상점과 일부 사건에서 쓴다. 전투에서 이기면 얻는다.')}>${iconImg('coin', 2)}${run.gold}</span>
       <button class="tb-item tb-btn" data-action="view-pile" data-pile="deck" ${tip('덱 보기\n지금 가진 카드 전체')}>${iconImg('deck', 2)}${run.deck.length}장</button>
+      ${mods.length ? `<span class="tb-modules">${mods.map((m) => moduleChip(m)).join('')}</span>` : ''}
       <span class="tb-spacer"></span>
       ${soundButtons()}
     </header>`;
 }
 
-export function renderTitle(): string {
+/** save: 이어할 수 있는 저장이 있으면 그 요약 */
+export function renderTitle(save: { char: string; act: number; floor: number; hp: number; maxHp: number } | null = null): string {
   return `
     <header class="topbar"><span class="tb-spacer"></span>${soundButtons()}</header>
     <div class="stage title-stage">
@@ -182,7 +202,8 @@ export function renderTitle(): string {
       <div class="title-text">
         <h1 class="logo-img"><img src="${logoUrl}" width="815" height="370" alt="오버클록 (Overclock)"></h1>
         <p class="tagline">멈춰버린 세계의 시간을 다시 돌리기 위해<br>마도공학 시계탑을 오른다</p>
-        <button class="btn big" data-action="start">태엽 감기</button>
+        ${save ? `<button class="btn big continue" data-action="continue">이어 오르기<small>${CHARACTERS[save.char]?.name ?? ''} · ${save.act + 1}구역 ${save.floor}층 · 체력 ${save.hp}/${save.maxHp}</small></button>` : ''}
+        <button class="btn ${save ? 'dim' : 'big'}" data-action="start" ${save ? tip('새로 시작\n캐릭터를 고르면 저장된 런은 사라집니다.') : ''}>${save ? '새로 시작' : '태엽 감기'}</button>
       </div>
     </div>
     <div class="panel howto">
@@ -193,7 +214,7 @@ export function renderTitle(): string {
         <li>${iconImg('chain', 2)}<span><b>맞물림</b> — 특정 계열 카드 바로 다음에 쓰면 추가 효과. <b>연동</b> — 같은 계열을 연속으로 쓰면 연쇄가 쌓인다.</span></li>
         <li>${iconImg('heat', 2)}<span><b>오버클록</b> — 증기압이 모자라도 <b>과열</b>을 쌓아 강행할 수 있다. 과열 ${MAX_HEAT} 도달 시 고장!</span></li>
       </ul>
-      <p class="hint">단축키 — E: 턴 종료 · Esc: 선택 취소 · 아이콘이나 카드에 마우스를 올리면 설명이 나옵니다</p>
+      <p class="hint">단축키 — E: 턴 종료 · Q: 필살기 · Esc: 선택 취소 · 아이콘이나 카드에 마우스를 올리면 설명이 나옵니다 · 진행은 자동 저장됩니다</p>
     </div>`;
 }
 
@@ -304,11 +325,12 @@ function skillButton(run: RunState, state: CombatState, active: boolean): string
   if (!skill) return '';
   const used = state.skillUsed;
   const charge = used ? 0 : run.skillCharge;
-  const pips = Array.from({ length: SKILL_RECHARGE }, (_, i) => `<i class="${state.skillReady || i < charge ? 'on' : ''}"></i>`).join('');
+  const recharge = skillRecharge(run);
+  const pips = Array.from({ length: recharge }, (_, i) => `<i class="${state.skillReady || i < charge ? 'on' : ''}"></i>`).join('');
   const status = state.skillReady
     ? '지금 쓸 수 있습니다. [Q]'
-    : used ? `이번 전투에서 사용했습니다. 전투 ${SKILL_RECHARGE}번을 마치면 다시 충전됩니다.`
-    : `충전 중 — 전투를 ${SKILL_RECHARGE - charge}번 더 마치면 쓸 수 있습니다.`;
+    : used ? `이번 전투에서 사용했습니다. 전투 ${recharge}번을 마치면 다시 충전됩니다.`
+    : `충전 중 — 전투를 ${recharge - charge}번 더 마치면 쓸 수 있습니다.`;
   return `
     <button class="skill-btn ${state.skillReady ? 'ready' : 'charging'} ${active ? 'active' : ''} skill-${run.character}"
       data-action="skill" ${state.skillReady ? '' : 'aria-disabled="true"'} ${tip(`★ 필살기 · ${skill.name}\n${skill.text}\n\n${status}`)}>
@@ -354,11 +376,17 @@ export function renderPileOverlay(pile: PileKind, cardIds: string[]): string {
     </div>`;
 }
 
-export function renderReward(run: RunState, options: string[], rerolled: boolean): string {
+export function renderReward(run: RunState, options: string[], rerolled: boolean, spoils: CombatSpoils): string {
+  const loot = [
+    `<span class="loot">${iconImg('coin', 3)}주화 +${spoils.gold}</span>`,
+    spoils.module ? `<span class="loot module-loot">${moduleChip(MODULES[spoils.module], 3)}<span><small>모듈 획득</small>${MODULES[spoils.module].name}</span></span>` : '',
+    spoils.healed ? `<span class="loot">${iconImg('heart', 3)}수리 키트 +${spoils.healed}</span>` : '',
+  ].join('');
   return `
     ${topBar(run, run.hp)}
     <div class="stage short-stage" ${actBackdrop(run)}>
       <div class="stage-title">${iconImg('gear', 3)} 승리! 부품을 하나 고르세요</div>
+      <div class="loot-row">${loot}</div>
     </div>
     <div class="reward-cards">${options
       .map((id) => {
@@ -414,34 +442,195 @@ export function renderActStart(run: RunState): string {
     </div>`;
 }
 
-export function renderRest(run: RunState, removing: boolean): string {
-  const stage = `
-    ${topBar(run, run.hp)}
-    <div class="stage rest-stage ${removing ? 'short-stage' : ''}" ${actBackdrop(run)}>
-      ${removing
-        ? `<div class="stage-title">${iconImg('gear', 3)} 분해할 부품을 고르세요</div>`
-        : `<div class="title-hero">${spriteImg(run.character, 3, 'bob')}</div>
-      <div class="rest-boiler">${spriteImg('boiler', 4, 'puff')}</div>`}
-    </div>`;
-  if (removing) {
-    // 같은 카드끼리 모아서 보여 준다
-    const deck = [...run.deck].sort((a, b) => a.defId.localeCompare(b.defId) || a.uid - b.uid);
-    return `${stage}
-    <div class="deck-grid">${deck.map((c) => cardHtml(CARDS[c.defId], { uid: c.uid, action: 'remove' })).join('')}</div>
-    <div class="center-row">
-      <button class="btn dim" data-action="remove-back">돌아가기</button>
-    </div>`;
-  }
+export type RestMode = 'menu' | 'upgrade' | 'remove';
+
+export function renderRest(run: RunState, mode: RestMode): string {
+  if (mode !== 'menu') return renderDeckPick(run, mode, 'rest-back');
   const canRemove = canRemoveCard(run);
-  return `${stage}
+  const canUpgrade = upgradableCards(run).length > 0;
+  return `
+    ${topBar(run, run.hp)}
+    <div class="stage rest-stage" ${actBackdrop(run)}>
+      <div class="title-hero">${spriteImg(run.character, 3, 'bob')}</div>
+      <div class="rest-boiler">${spriteImg('boiler', 4, 'puff')}</div>
+    </div>
     <div class="panel center-panel">
       <h2>정비소</h2>
-      <p>증기 배관 사이로 잠시 숨을 돌린다. 보일러의 온기가 기계 팔다리를 데운다.<br>둘 중 하나만 할 수 있다.</p>
+      <p>증기 배관 사이로 잠시 숨을 돌린다. 보일러의 온기가 기계 팔다리를 데운다.<br>셋 중 하나만 할 수 있다.</p>
       <div class="rest-choices">
-        <button class="btn big" data-action="rest">정비하기 — 체력 ${Math.round(REST_HEAL_RATIO * 100)}% 회복</button>
-        <button class="btn big" data-action="remove-menu" ${canRemove ? '' : 'disabled'}>분해하기 — 덱에서 카드 1장 제거</button>
+        <button class="btn big" data-action="rest">휴식하기<small>체력 ${restHealAmount(run)} 회복</small></button>
+        <button class="btn big" data-action="rest-upgrade" ${canUpgrade ? '' : 'disabled'}>정비하기<small>카드 1장 강화</small></button>
+        <button class="btn big" data-action="rest-remove" ${canRemove ? '' : 'disabled'}>분해하기<small>덱에서 카드 1장 제거</small></button>
       </div>
       ${canRemove ? '' : `<p class="hint">덱이 ${MIN_DECK_SIZE}장 이하라 더 분해할 수 없습니다.</p>`}
+    </div>`;
+}
+
+/**
+ * 덱에서 카드 한 장을 고르는 화면 — 정비소 · 상점 · 사건이 함께 쓴다.
+ * 강화는 강화 후 모습을 보여 주고, 마우스를 올리면 원래 카드와 비교할 수 있다.
+ */
+export function renderDeckPick(run: RunState, mode: 'upgrade' | 'remove', backAction: string | null, note = ''): string {
+  const pool = mode === 'upgrade' ? upgradableCards(run) : run.deck;
+  const deck = [...pool].sort((a, b) => a.defId.localeCompare(b.defId) || a.uid - b.uid);
+  const cards = deck.map((c) => {
+    if (mode === 'remove') return cardHtml(CARDS[c.defId], { uid: c.uid, action: 'pick-card' });
+    return `<div class="upgrade-pair">${cardHtml(CARDS[`${c.defId}+`], { uid: c.uid, action: 'pick-card', badge: '강화 후' })}<div class="upgrade-before">${cardHtml(CARDS[c.defId])}</div></div>`;
+  }).join('');
+  return `
+    ${topBar(run, run.hp)}
+    <div class="stage short-stage" ${actBackdrop(run)}>
+      <div class="stage-title">${iconImg('gear', 3)} ${mode === 'upgrade' ? '강화할 부품을 고르세요' : '분해할 부품을 고르세요'}</div>
+      ${note || mode === 'upgrade' ? `<p class="stage-note">${note || '강화된 모습입니다. 마우스를 올리면 원래 카드가 보입니다.'}</p>` : ''}
+    </div>
+    <div class="deck-grid">${cards}</div>
+    ${backAction ? `<div class="center-row"><button class="btn dim" data-action="${backAction}">돌아가기</button></div>` : ''}`;
+}
+
+// ── 지도 ──────────────────────────────────────────
+
+const MAP_W = 620;
+const ROW_H = 74;
+const MAP_PAD = 46;
+
+function nodePos(n: MapNode): { x: number; y: number } {
+  const colW = (MAP_W - 80) / (MAP_COLS - 1);
+  const x = 40 + n.col * colW + n.dx * 14;
+  const y = MAP_PAD + (MAP_ROWS - n.row) * ROW_H + n.dy * 10;
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+export const mapHeight = () => MAP_PAD * 2 + MAP_ROWS * ROW_H;
+
+export function renderMap(run: RunState): string {
+  const reach = new Set(reachableNodes(run).map((n) => n.id));
+  const visited = new Set(run.visited);
+  const here = run.node;
+  const height = mapHeight();
+  const walked = new Set(run.visited.slice(1).map((id, i) => `${run.visited[i]}-${id}`));
+
+  const lines = run.map.flatMap((n) => n.next.map((to) => {
+    const a = nodePos(n), b = nodePos(run.map[to]);
+    const cls = walked.has(`${n.id}-${to}`) ? 'walked' : n.id === here && reach.has(to) ? 'open' : '';
+    return `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+  })).join('');
+
+  const nodes = run.map.map((n) => {
+    const { x, y } = nodePos(n);
+    const info = ROOM_INFO[n.kind];
+    const state = n.id === here ? 'current' : reach.has(n.id) ? 'reachable' : visited.has(n.id) ? 'visited' : n.row <= (currentNode(run)?.row ?? -1) ? 'past' : '';
+    const action = reach.has(n.id) ? `data-action="go-node" data-node="${n.id}"` : '';
+    return `<button class="map-node room-${n.kind} ${state}" style="left:${x}px;top:${y}px" ${action} ${reach.has(n.id) ? '' : 'tabindex="-1"'}
+      ${tip(`${info.name}\n${info.desc}`)}>${iconImg(info.icon, n.kind === 'boss' ? 4 : 3)}</button>`;
+  }).join('');
+
+  const legend = (Object.keys(ROOM_INFO) as RoomKind[]).map((k) =>
+    `<li ${tip(`${ROOM_INFO[k].name}\n${ROOM_INFO[k].desc}`)}>${iconImg(ROOM_INFO[k].icon, 2)}${ROOM_INFO[k].name}</li>`).join('');
+  const [title, place] = ACTS[run.act].name.split(' — ');
+
+  return `
+    ${topBar(run, run.hp)}
+    <div class="map-screen" ${actBackdrop(run)}>
+      <aside class="panel map-legend">
+        <h3>${run.act + 1}구역 · ${title}</h3>
+        <p class="map-place">${place}</p>
+        <ul>${legend}</ul>
+        <p class="hint">${here === null ? '맨 아래 방 중 하나를 골라 오르세요.' : '빛나는 방으로만 갈 수 있습니다.'}</p>
+      </aside>
+      <div class="map-scroll" data-map-scroll>
+        <div class="map-tower" style="width:${MAP_W}px;height:${height}px">
+          <svg class="map-lines" width="${MAP_W}" height="${height}" viewBox="0 0 ${MAP_W} ${height}">${lines}</svg>
+          ${nodes}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── 상점 ──────────────────────────────────────────
+
+export function renderShop(run: RunState, shop: ShopStock, removing: boolean): string {
+  if (removing) return renderDeckPick(run, 'remove', 'shop-back', `분해 비용 주화 ${removePrice(run)}`);
+  const priceTag = (price: number, sold: boolean) =>
+    sold ? '<span class="price sold">판매 완료</span>' : `<span class="price ${run.gold < price ? 'short' : ''}">${iconImg('coin', 2)}${price}</span>`;
+  const cards = shop.cards.map((item, i) => `
+    <div class="shop-item ${item.sold ? 'sold' : ''}">
+      ${item.sold ? cardHtml(CARDS[item.id], { extraClass: 'sold-card' }) : cardHtml(CARDS[item.id], { action: 'buy-card', attrs: `data-index="${i}"`, extraClass: run.gold < item.price ? 'too-expensive' : isFavored(run, item.id) ? 'favored' : '', badge: isFavored(run, item.id) ? '★ 어울림' : undefined })}
+      ${priceTag(item.price, item.sold)}
+    </div>`).join('');
+  const modules = shop.modules.map((item, i) => {
+    const m = MODULES[item.id];
+    return `
+    <button class="shop-module panel ${item.sold ? 'sold' : ''}" data-action="buy-module" data-index="${i}" ${item.sold || run.gold < item.price ? 'disabled' : ''}>
+      ${moduleImg(m.id, m.tone, 4)}
+      <span class="shop-module-text"><b>${m.name}</b>${m.rarity === 'rare' ? ' <em>희귀</em>' : ''}<br><small>${m.text}</small></span>
+      ${priceTag(item.price, item.sold)}
+    </button>`;
+  }).join('');
+  const rPrice = removePrice(run);
+  return `
+    ${topBar(run, run.hp)}
+    <div class="stage short-stage shop-stage" ${actBackdrop(run)}>
+      <div class="stage-title">${iconImg('roomShop', 3)} 떠돌이 부품상 <small>"구경은 공짜라네."</small></div>
+    </div>
+    <div class="shop-cards">${cards}</div>
+    <div class="shop-bottom">
+      <div class="shop-modules">${modules || '<p class="hint">모듈이 다 팔렸다.</p>'}</div>
+      <button class="shop-module panel" data-action="shop-remove" ${shop.removeUsed || run.gold < rPrice || !canRemoveCard(run) ? 'disabled' : ''}>
+        ${iconImg('roomRest', 4)}
+        <span class="shop-module-text"><b>분해 서비스</b><br><small>${shop.removeUsed ? '이 상점에서는 이미 썼다.' : '덱에서 카드 1장 제거. 쓸 때마다 비싸진다.'}</small></span>
+        ${shop.removeUsed ? '<span class="price sold">사용함</span>' : priceTag(rPrice, false)}
+      </button>
+    </div>
+    <div class="center-row"><button class="btn" data-action="leave">떠나기</button></div>`;
+}
+
+// ── 사건 ──────────────────────────────────────────
+
+export interface EventView {
+  id: string;
+  result: { text: string; lines: string[] } | null;
+}
+
+export function renderEvent(run: RunState, view: EventView): string {
+  const ev = EVENTS[view.id];
+  const body = view.result
+    ? `<p class="event-text">${view.result.text}</p>
+       ${view.result.lines.length ? `<ul class="event-lines">${view.result.lines.map((l) => `<li>${l}</li>`).join('')}</ul>` : ''}
+       <div class="event-choices"><button class="btn big" data-action="leave">계속 오른다</button></div>`
+    : `<p class="event-text">${ev.text.replace(/\n/g, '<br>')}</p>
+       <div class="event-choices">${ev.choices.map((c, i) => {
+         const ok = canChoose(run, view.id, i);
+         return `<button class="btn event-choice" data-action="event-choice" data-index="${i}" ${ok ? '' : 'disabled'}>
+           <b>${c.label}</b><small>${c.desc}${ok ? '' : ' (주화 부족)'}</small></button>`;
+       }).join('')}</div>`;
+  return `
+    ${topBar(run, run.hp)}
+    <div class="event-screen" ${actBackdrop(run)}>
+      <div class="panel event-panel">
+        <div class="event-art">${spriteImg(ev.sprite, 4, 'bob')}</div>
+        <div class="event-body">
+          <h2>${iconImg('roomEvent', 2)} ${ev.name}</h2>
+          ${body}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── 보물 ──────────────────────────────────────────
+
+export function renderTreasure(run: RunState, loot: { module: string | null; gold: number }): string {
+  const m = loot.module ? MODULES[loot.module] : null;
+  return `
+    ${topBar(run, run.hp)}
+    <div class="stage title-stage treasure-stage" ${actBackdrop(run)}>
+      <div class="treasure-chest">${iconImg('roomTreasure', 10, 'chest-open')}</div>
+      <div class="title-text">
+        <p class="act-no">보물 상자</p>
+        ${m
+          ? `<div class="treasure-module">${moduleImg(m.id, m.tone, 5, 'glow-in')}<div><h2>${m.name}${m.rarity === 'rare' ? ' <em>희귀</em>' : ''}</h2><p>${m.text}</p></div></div>`
+          : `<h2>주화 +${loot.gold}</h2><p>더 챙길 모듈이 없어 주화만 챙겼다.</p>`}
+        <button class="btn big" data-action="leave">계속 오른다</button>
+      </div>
     </div>`;
 }
 
@@ -452,7 +641,7 @@ export function renderEnd(run: RunState, won: boolean): string {
       <div class="title-hero">${spriteImg(run.character, 4, won ? 'bob' : 'fallen')}</div>
       <div class="title-text">
         <h1 class="logo ${won ? '' : 'lose'}">${won ? '시간이 다시 흐른다' : '태엽이 멈췄다'}</h1>
-        <p class="tagline">${won ? '시계탑의 심장이 다시 뛰기 시작했다.' : `${floorInAct(run).act + 1}구역 ${floorInAct(run).index}층에서 쓰러졌다.`}<br>시드 ${run.seed} · 덱 ${run.deck.length}장</p>
+        <p class="tagline">${won ? '시계탑의 심장이 다시 뛰기 시작했다.' : `${floorInAct(run).act + 1}구역 ${floorInAct(run).index}층에서 쓰러졌다.`}<br>시드 ${run.seed} · 덱 ${run.deck.length}장 · 모듈 ${run.modules.length}개 · 주화 ${run.gold}</p>
         <button class="btn big" data-action="restart">다시 오르기</button>
       </div>
     </div>`;

@@ -81,6 +81,8 @@ export interface CardDef {
   /** 직전에 사용한 카드가 `after` 계열이면 추가로 발동 */
   mesh?: { after: Family; effects: Effect[] };
   exhaust?: boolean;
+  /** 정비로 강화된 카드 */
+  upgraded?: boolean;
 }
 
 /** 캐릭터 필살기 — 증기압을 쓰지 않고, 몇 번의 전투마다 한 번 쓸 수 있다 */

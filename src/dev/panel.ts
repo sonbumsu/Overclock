@@ -3,17 +3,24 @@
 // 게임 화면(#app) 바깥에 붙여서, 게임이 화면을 다시 그려도 패널은 그대로 남는다.
 
 import { aliveEnemies } from '../core/combat';
-import { addCard, currentFloor, runCharacter, SKILL_RECHARGE, type RunState } from '../core/run';
+import { addCard, currentNode, gainModule, runCharacter, skillRecharge, type RunState } from '../core/run';
 import type { CombatEvent, CombatState, StatusId } from '../core/types';
 import { ACTS } from '../data/acts';
-import { CARDS } from '../data/cards';
+import { canUpgradeCard, CARDS } from '../data/cards';
+import { EVENT_IDS, EVENTS } from '../data/events';
+import { MODULE_IDS, MODULES } from '../data/modules';
 import { CHARACTER_IDS, CHARACTERS } from '../data/characters';
 import { ENEMIES } from '../data/enemies';
 import { FX_KINDS, spawnFx, type FxKind } from '../ui/effects';
 import { STATUS_INFO } from '../ui/render';
 import { SFX_NAMES, sfx, unlock, type Sfx } from '../ui/sound';
 
-export type DevGoto = 'title' | 'select' | 'reward' | 'rest' | 'actStart' | 'won' | 'lost' | 'floor';
+export type DevGoto =
+  | 'title' | 'select' | 'map' | 'reward' | 'rest' | 'shop' | 'event' | 'treasure' | 'actStart' | 'won' | 'lost'
+  /** arg: 구역 번호(1~3) — 그 구역의 새 지도로 */
+  | 'act'
+  /** arg: 지도의 방 id — 길과 상관없이 바로 들어간다 */
+  | 'node';
 
 /** main.ts가 넘겨주는 게임 조작 창구 */
 export interface DevApi {
@@ -134,7 +141,7 @@ function renderPanel(): void {
   panel.innerHTML = `
     <div class="dev-head">
       <b>개발자 패널</b>
-      <span class="dev-dim">${api.screenKind()}${run ? ` · ${run.floor}층 · seed ${run.seed}` : ''}</span>
+      <span class="dev-dim">${api.screenKind()}${run ? ` · ${run.act + 1}구역 ${(currentNode(run)?.row ?? -1) + 1}층 · seed ${run.seed}` : ''}</span>
       ${btn('close', '✕')}
     </div>
     ${section('start', '빠른 전투', startSection())}
@@ -144,7 +151,7 @@ function renderPanel(): void {
     ${section('cards', '카드', `
       <input type="search" data-field="cardFilter" placeholder="카드 이름 / id 검색" value="${esc(ui.cardFilter)}">
       <div class="dev-cards">${cardList()}</div>`)}
-    ${section('screens', '화면 · 층 이동', screenSection(run))}
+    ${section('screens', '화면 · 지도 이동', screenSection(run))}
     ${section('fx', '연출 실험', fxSection())}
     ${run ? section('run', '런', runSection(run)) : ''}`;
 }
@@ -236,16 +243,20 @@ function cardList(): string {
     </div>`).join('') || '<p class="dev-dim">없음</p>';
 }
 
+const ROOM_NAME: Record<string, string> = { combat: '전투', elite: '정예', rest: '정비소', shop: '상점', event: '사건', treasure: '보물', boss: '보스' };
+
 function screenSection(run: RunState | null): string {
-  const floors = run?.floors.map((f, i) => {
-    const label = f.kind === 'combat' ? `${f.tier} — ${f.enemies.join(', ')}` : f.kind === 'rest' ? '정비소' : '구역 입구';
-    return `<option value="${i}" ${i === run.floor ? 'selected' : ''}>${i}. ${f.act + 1}구역 ${label}</option>`;
-  }).join('') ?? '';
+  const nodes = run?.map.map((n) =>
+    `<option value="${n.id}" ${n.id === run.node ? 'selected' : ''}>${n.row + 1}층 · ${ROOM_NAME[n.kind]} (#${n.id})</option>`).join('') ?? '';
+  const events = EVENT_IDS.map((id) => `<option value="${id}">${EVENTS[id].name}</option>`).join('');
   return `
-    <div class="dev-row">${btn('go-title', '타이틀')}${btn('go-select', '캐릭터 선택')}${btn('go-actStart', '구역 입구')}${btn('go-rest', '정비소')}</div>
+    <div class="dev-row">${btn('go-title', '타이틀')}${btn('go-select', '캐릭터 선택')}${btn('go-map', '지도')}${btn('go-actStart', '구역 입구')}</div>
+    <div class="dev-row">${btn('go-rest', '정비소')}${btn('go-shop', '상점')}${btn('go-treasure', '보물')}</div>
     <div class="dev-row">${btn('go-reward-normal', '보상(일반)')}${btn('go-reward-elite', '보상(정예)')}${btn('go-reward-boss', '보상(보스)')}</div>
     <div class="dev-row">${btn('go-won', '엔딩: 승리')}${btn('go-lost', '엔딩: 패배')}</div>
-    ${run ? `<label>층 이동 <select data-field="floor">${floors}</select></label>${btn('go-floor', '이 층으로')}` : '<p class="dev-dim">런을 시작하면 층 이동을 쓸 수 있습니다.</p>'}`;
+    <div class="dev-row"><select data-field="event">${events}</select>${btn('go-event', '이 사건으로')}</div>
+    <div class="dev-row">${btn('go-act-1', '1구역 새 지도')}${btn('go-act-2', '2구역 새 지도')}${btn('go-act-3', '3구역 새 지도')}</div>
+    ${run ? `<label>방 이동 <select data-field="node">${nodes}</select></label>${btn('go-node', '이 방으로 (길 무시)')}` : '<p class="dev-dim">런을 시작하면 방 이동을 쓸 수 있습니다.</p>'}`;
 }
 
 function fxSection(): string {
@@ -267,15 +278,22 @@ function fxSection(): string {
 
 function runSection(run: RunState): string {
   const ch = runCharacter(run);
-  const floor = currentFloor(run);
+  const node = currentNode(run);
+  const free = MODULE_IDS.filter((id) => !run.modules.includes(id));
   return `
-    <p>${ch.name} · 덱 ${run.deck.length}장 · ${floor ? `${floor.kind}` : '끝'}</p>
+    <p>${ch.name} · 덱 ${run.deck.length}장 · ${node ? ROOM_NAME[node.kind] : '구역 입구'}</p>
     <div class="dev-grid">
       <label>체력 ${num('runHp', run.hp)}</label><label>최대 ${num('runMaxHp', run.maxHp)}</label>
-      <label>필살기 충전 ${num('skillCharge', run.skillCharge, 44)}/${SKILL_RECHARGE}</label>
+      <label>주화 ${num('gold', run.gold)}</label>
+      <label>필살기 충전 ${num('skillCharge', run.skillCharge, 44)}/${skillRecharge(run)}</label>
     </div>
     ${btn('run-apply', '런 수치 적용', 'class="primary"')}
-    <div class="dev-deck">${run.deck.map((c) => `<span class="dev-chip" data-dev="deck-remove" data-uid="${c.uid}" title="덱에서 빼기">${CARDS[c.defId]?.name ?? c.defId} ✕</span>`).join('')}</div>`;
+    <p class="dev-dim">모듈</p>
+    <div class="dev-row"><select data-field="module">${free.map((id) => `<option value="${id}">${MODULES[id].name} — ${MODULES[id].text}</option>`).join('')}</select>${btn('module-add', '+ 모듈')}</div>
+    <div class="dev-chips">${run.modules.map((id) => `<span class="dev-chip" data-dev="module-remove" data-id="${id}" title="${esc(MODULES[id]?.text ?? '')} — 클릭해서 빼기">${MODULES[id]?.name ?? id} ✕</span>`).join('') || '<span class="dev-dim">없음</span>'}</div>
+    <p class="dev-dim">덱 — 클릭: 빼기 · ⬆: 강화</p>
+    <div class="dev-row">${btn('upgrade-all', '덱 전체 강화')}</div>
+    <div class="dev-deck">${run.deck.map((c) => `<span class="dev-chip"><span data-dev="deck-remove" data-uid="${c.uid}" title="덱에서 빼기">${CARDS[c.defId]?.name ?? c.defId} ✕</span>${canUpgradeCard(c.defId) ? ` <span data-dev="deck-upgrade" data-uid="${c.uid}" title="강화">⬆</span>` : ''}</span>`).join('')}</div>`;
 }
 
 // ── 입력 처리 ───────────────────────────────────────
@@ -495,11 +513,14 @@ function onClick(ev: MouseEvent): void {
       api.render();
       break;
 
-    case 'go-floor': return api.goto('floor', fieldNum('floor'));
+    case 'go-node': return api.goto('node', fieldNum('node'));
+    case 'go-event': return api.goto('event', field('event')?.value);
+    case 'go-act-1': case 'go-act-2': case 'go-act-3': return api.goto('act', Number(action.slice(-1)));
     case 'go-reward-normal': return api.goto('reward', 'normal');
     case 'go-reward-elite': return api.goto('reward', 'elite');
     case 'go-reward-boss': return api.goto('reward', 'boss');
     case 'go-title': case 'go-select': case 'go-actStart': case 'go-rest': case 'go-won': case 'go-lost':
+    case 'go-map': case 'go-shop': case 'go-treasure':
       return api.goto(action.slice(3) as DevGoto);
 
     case 'fx': {
@@ -530,7 +551,29 @@ function onClick(ev: MouseEvent): void {
       if (!run) return;
       run.maxHp = Math.max(1, fieldNum('runMaxHp', run.maxHp));
       run.hp = Math.max(1, Math.min(run.maxHp, fieldNum('runHp', run.hp)));
-      run.skillCharge = Math.max(0, Math.min(SKILL_RECHARGE, fieldNum('skillCharge', run.skillCharge)));
+      run.skillCharge = Math.max(0, Math.min(skillRecharge(run), fieldNum('skillCharge', run.skillCharge)));
+      run.gold = Math.max(0, fieldNum('gold', run.gold));
+      api.render();
+      break;
+    case 'module-add': {
+      const id = field('module')?.value;
+      if (!run || !id) return;
+      gainModule(run, id);
+      sfx('reward');
+      api.render();
+      break;
+    }
+    case 'module-remove':
+      if (!run) return;
+      run.modules = run.modules.filter((id) => id !== el.dataset.id);
+      api.render();
+      break;
+    case 'deck-upgrade':
+    case 'upgrade-all':
+      if (!run) return;
+      for (const card of run.deck)
+        if ((action === 'upgrade-all' || card.uid === uid) && canUpgradeCard(card.defId)) card.defId = `${card.defId}+`;
+      sfx('reward');
       api.render();
       break;
   }

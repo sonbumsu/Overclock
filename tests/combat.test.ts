@@ -12,10 +12,19 @@ import {
   useSkill,
 } from '../src/core/combat';
 import { Rng } from '../src/core/rng';
-import { createRun, MIN_DECK_SIZE, removeCard, rollCardRewards, settleSkill, SKILL_RECHARGE, startFloorCombat } from '../src/core/run';
+import {
+  buyShopItem, chooseEvent, claimCombatSpoils, createRun, createShop, gainModule, MIN_DECK_SIZE, moveTo, reachableNodes, removeCard,
+  removePrice, rest, restHealAmount, rollCardRewards, settleSkill, shopRemove, SKILL_RECHARGE, skillRecharge, startCustomCombat,
+  startRoomCombat, upgradeCard, advanceAct, type RunState,
+} from '../src/core/run';
+import { generateMap, MAP_COLS, MAP_ROWS } from '../src/core/map';
+import { loadGame, saveGame } from '../src/core/save';
+import { EVENTS } from '../src/data/events';
+import { MODULES } from '../src/data/modules';
 import { ARCHETYPES } from '../src/data/archetypes';
 import { CARDS } from '../src/data/cards';
 import { CHARACTER_IDS, CHARACTERS } from '../src/data/characters';
+import { ACTS } from '../src/data/acts';
 import type { CombatState } from '../src/core/types';
 
 /** 손패를 원하는 카드로 고정한 전투를 만든다. */
@@ -327,10 +336,10 @@ describe('캐릭터', () => {
   });
 
   it('캐릭터 고유 능력이 전투 시작 상태에 걸린다', () => {
-    const gunner = startFloorCombat(createRun(1, 'gunner'));
+    const gunner = startCustomCombat(createRun(1, 'gunner'), ['automaton']);
     expect(gunner.player.statuses.compressor).toBe(3);
     expect(gunner.player.statuses.pressure).toBe(3); // 첫 턴 시작에 이미 +3
-    expect(startFloorCombat(createRun(1, 'overclocker')).player.maxHeat).toBe(15);
+    expect(startCustomCombat(createRun(1, 'overclocker'), ['automaton']).player.maxHeat).toBe(15);
   });
 
   it('보일러공의 불씨는 화상을 1 더 건다', () => {
@@ -384,15 +393,6 @@ describe('런', () => {
     const run = createRun(42);
     const rewards = rollCardRewards(run, 'normal');
     expect(new Set(rewards).size).toBe(3);
-  });
-
-  it('3구역 × 10층, 구역마다 보스로 끝난다', () => {
-    const run = createRun(7);
-    const bosses = run.floors.filter((f) => f.kind === 'combat' && f.tier === 'boss');
-    expect(bosses.map((f) => f.act)).toEqual([0, 1, 2]);
-    expect(run.floors.filter((f) => f.kind === 'actStart').length).toBe(2);
-    const last = run.floors[run.floors.length - 1];
-    expect(last.kind === 'combat' && last.tier).toBe('boss');
   });
 
   it('재배치는 지금 보이는 카드를 다시 내놓지 않는다', () => {
@@ -528,23 +528,23 @@ describe('태엽 장력', () => {
 });
 
 describe('필살기', () => {
-  /** 첫 전투 층으로 옮긴 런 */
+  /** 맨 아래 전투 방에 들어간 런 */
   function combatRun(char: string) {
     const run = createRun(5, char);
-    run.floor = run.floors.findIndex((f) => f.kind === 'combat');
+    moveTo(run, reachableNodes(run)[0].id);
     return run;
   }
 
   it('모든 캐릭터에게 필살기가 있고, 첫 전투부터 쓸 수 있다', () => {
     for (const id of CHARACTER_IDS) {
-      const combat = startFloorCombat(combatRun(id));
+      const combat = startRoomCombat(combatRun(id));
       expect(combat.skill?.id).toBe(CHARACTERS[id].skill.id);
       expect(combat.skillReady).toBe(true);
     }
   });
 
   it('한 전투에 한 번만 쓰고, 증기압을 쓰지 않는다', () => {
-    const combat = startFloorCombat(combatRun('guardian'));
+    const combat = startRoomCombat(combatRun('guardian'));
     const steam = combat.player.steam;
     expect(useSkill(combat)).toBe(true);
     expect(combat.player.block).toBeGreaterThanOrEqual(20);
@@ -555,12 +555,12 @@ describe('필살기', () => {
 
   it(`쓰고 나면 전투 ${SKILL_RECHARGE}번을 마쳐야 다시 쓸 수 있다`, () => {
     const run = combatRun('engineer');
-    const used = startFloorCombat(run);
+    const used = startRoomCombat(run);
     useSkill(used);
     settleSkill(run, used);
     const ready: boolean[] = [];
     for (let i = 0; i < SKILL_RECHARGE; i++) {
-      const c = startFloorCombat(run);
+      const c = startRoomCombat(run);
       ready.push(c.skillReady);
       settleSkill(run, c);
     }
@@ -588,5 +588,281 @@ describe('필살기', () => {
     expect(state.enemies.map((e) => e.hp)).toEqual([200 - 27, 200 - 27]);
     expect(state.player.heat).toBe(0);
     expect(state.player.block).toBe(10);
+  });
+});
+
+// ══ 지도 ══
+
+describe('시계탑 지도', () => {
+  const maps = Array.from({ length: 40 }, (_, i) => generateMap(new Rng(i + 1)));
+
+  it('맨 아래 방에서 출발한 모든 길은 보스로 이어진다', () => {
+    for (const map of maps) {
+      const boss = map[map.length - 1];
+      expect(boss.kind).toBe('boss');
+      expect(boss.row).toBe(MAP_ROWS);
+      for (const n of map) {
+        if (n.kind === 'boss') continue;
+        expect(n.next.length).toBeGreaterThan(0);
+        for (const id of n.next) expect(map[id].row).toBe(n.row + 1);
+      }
+    }
+  });
+
+  it('갈림길이 있고, 첫 줄은 전투 · 중간은 보물 · 보스 앞은 정비소다', () => {
+    for (const map of maps) {
+      expect(map.filter((n) => n.row === 0).length).toBeGreaterThanOrEqual(2);
+      expect(map.some((n) => n.next.length >= 2)).toBe(true);
+      expect(map.filter((n) => n.row === 0).every((n) => n.kind === 'combat')).toBe(true);
+      expect(map.filter((n) => n.row === 6).every((n) => n.kind === 'treasure')).toBe(true);
+      expect(map.filter((n) => n.row === MAP_ROWS - 1).every((n) => n.kind === 'rest')).toBe(true);
+      expect(map.every((n) => n.kind === 'boss' || (n.col >= 0 && n.col < MAP_COLS))).toBe(true);
+    }
+  });
+
+  it('지도마다 상점과 정예가 있고, 초반 3줄에는 정예가 없다', () => {
+    for (const map of maps) {
+      expect(map.some((n) => n.kind === 'shop')).toBe(true);
+      expect(map.some((n) => n.kind === 'elite')).toBe(true);
+      expect(map.some((n) => n.kind === 'elite' && n.row < 4)).toBe(false);
+    }
+  });
+
+  it('정예 · 정비소 · 상점은 한 길에서 연달아 나오지 않는다', () => {
+    for (const map of maps)
+      for (const n of map)
+        for (const id of n.next)
+          if (['elite', 'shop'].includes(n.kind)) expect(map[id].kind).not.toBe(n.kind);
+  });
+
+  it('길끼리 엇갈리지(X자로 교차하지) 않는다', () => {
+    for (const map of maps) {
+      const edges = map.flatMap((n) => n.next.map((id) => ({ row: n.row, a: n.col, b: map[id].col })))
+        .filter((e) => e.row < MAP_ROWS - 1);
+      for (const e of edges)
+        for (const f of edges)
+          if (e.row === f.row && e.a < f.a) expect(e.b <= f.b).toBe(true);
+    }
+  });
+
+  it('이어진 방으로만 이동할 수 있다', () => {
+    const run = createRun(3);
+    const first = reachableNodes(run)[0];
+    expect(moveTo(run, first.id)).not.toBeNull();
+    const unreachable = run.map.find((n) => n.row === 2)!;
+    expect(moveTo(run, unreachable.id)).toBeNull();
+    expect(moveTo(run, first.next[0])).not.toBeNull();
+    expect(run.visited).toEqual([first.id, first.next[0]]);
+  });
+
+  it('구역 처음 두 일반 전투는 쉬운 무리다', () => {
+    const run = createRun(8);
+    moveTo(run, reachableNodes(run)[0].id);
+    const easy = ACTS[0].easy.map((g) => g.join());
+    for (let i = 0; i < 2; i++) expect(easy).toContain(startRoomCombat(run).enemies.map((e) => e.defId).join());
+  });
+
+  it('다음 구역으로 가면 새 지도에서 다시 시작한다', () => {
+    const run = createRun(2);
+    moveTo(run, reachableNodes(run)[0].id);
+    advanceAct(run);
+    expect(run.act).toBe(1);
+    expect(run.node).toBeNull();
+    expect(run.visited).toEqual([]);
+  });
+});
+
+// ══ 정비(강화) ══
+
+describe('정비', () => {
+  it('강화하면 카드 id에 +가 붙고 수치가 오른다', () => {
+    const run = createRun(1);
+    const strike = run.deck.find((c) => c.defId === 'cog_strike')!;
+    expect(upgradeCard(run, strike.uid)).toBe(true);
+    expect(strike.defId).toBe('cog_strike+');
+    expect(CARDS['cog_strike+'].name).toBe('톱니 타격+');
+    expect(upgradeCard(run, strike.uid)).toBe(false);
+    const state = setup(['cog_strike+']);
+    const hp = state.enemies[0].hp;
+    playCard(state, 100);
+    expect(hp - state.enemies[0].hp).toBe(9);
+  });
+
+  it('불량 카드를 뺀 모든 카드에 강화판이 있다', () => {
+    const missing = Object.values(CARDS).filter((c) => !c.upgraded && c.type !== 'status' && !CARDS[`${c.id}+`]);
+    expect(missing.map((c) => c.id)).toEqual([]);
+  });
+
+  it('강화한 동력부는 비용이 줄어든다', () => {
+    expect(CARDS['mana_amplifier+'].cost).toBe(1);
+    expect(CARDS['mana_amplifier+'].effects).toEqual(CARDS.mana_amplifier.effects);
+  });
+
+  it('강화 카드는 보상에 나오지 않는다', () => {
+    const run = createRun(4);
+    for (let i = 0; i < 100; i++) expect(rollCardRewards(run, 'boss').some((id) => id.endsWith('+'))).toBe(false);
+  });
+});
+
+// ══ 모듈 ══
+
+describe('모듈', () => {
+  const withModules = (...ids: string[]): RunState => {
+    const run = createRun(6);
+    for (const id of ids) gainModule(run, id);
+    return run;
+  };
+
+  it('전투 시작 효과가 걸린다', () => {
+    const run = withModules('brass_cog', 'rivet_plating', 'corrosion_sprayer', 'cooling_fins', 'spare_boiler');
+    const c = startCustomCombat(run, ['automaton', 'rat']);
+    expect(c.player.statuses.strength).toBe(1);
+    expect(c.player.block).toBe(10);
+    expect(c.enemies.every((e) => e.statuses.vulnerable === 2)).toBe(true);
+    expect(c.player.maxHeat).toBe(13);
+    expect(c.player.steam).toBe(c.player.maxSteam + 2);
+  });
+
+  it('예비 태엽은 첫 턴에만 2장 더 뽑는다', () => {
+    const c = startCustomCombat(withModules('spare_spring'), ['automaton']);
+    expect(c.hand.length).toBe(HAND_SIZE + 2);
+  });
+
+  it('생명 태엽은 최대 체력을 올리고, 같은 모듈은 두 번 얻지 않는다', () => {
+    const run = createRun(6);
+    const max = run.maxHp;
+    gainModule(run, 'life_spring');
+    gainModule(run, 'life_spring');
+    expect(run.maxHp).toBe(max + 10);
+    expect(run.modules).toEqual(['life_spring']);
+  });
+
+  it('정예는 모듈을 주고, 일반 전투는 주화만 준다', () => {
+    const run = createRun(9);
+    const before = run.gold;
+    const normal = claimCombatSpoils(run, 'normal');
+    expect(normal.module).toBeNull();
+    expect(run.gold).toBe(before + normal.gold);
+    const elite = claimCombatSpoils(run, 'elite');
+    expect(elite.module).not.toBeNull();
+    expect(run.modules).toContain(elite.module);
+  });
+
+  it('수리 키트 · 증기 침대 · 축전지', () => {
+    const run = withModules('repair_kit', 'steam_bed', 'capacitor');
+    run.hp = 10;
+    expect(claimCombatSpoils(run, 'normal').healed).toBe(6);
+    expect(restHealAmount(run)).toBe(Math.ceil(run.maxHp * 0.45));
+    expect(skillRecharge(run)).toBe(SKILL_RECHARGE - 1);
+    rest(run);
+    expect(run.hp).toBe(16 + Math.ceil(run.maxHp * 0.45));
+  });
+
+  it('모든 모듈 설명이 있고 id가 일치한다', () => {
+    for (const [id, m] of Object.entries(MODULES)) {
+      expect(m.id).toBe(id);
+      expect(m.text.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ══ 상점 ══
+
+describe('상점', () => {
+  it('카드 5장과 모듈 2개를 판다', () => {
+    const shop = createShop(createRun(12));
+    expect(shop.cards.length).toBe(5);
+    expect(new Set(shop.cards.map((c) => c.id)).size).toBe(5);
+    expect(shop.modules.length).toBe(2);
+  });
+
+  it('주화가 모자라면 살 수 없고, 사면 주화가 줄고 덱에 들어간다', () => {
+    const run = createRun(12);
+    const shop = createShop(run);
+    const item = shop.cards[0];
+    run.gold = item.price - 1;
+    expect(buyShopItem(run, item, 'card')).toBe(false);
+    run.gold = item.price;
+    const size = run.deck.length;
+    expect(buyShopItem(run, item, 'card')).toBe(true);
+    expect(run.gold).toBe(0);
+    expect(run.deck.length).toBe(size + 1);
+    expect(buyShopItem(run, item, 'card')).toBe(false);
+  });
+
+  it('분해 서비스는 상점마다 한 번, 쓸 때마다 비싸진다', () => {
+    const run = createRun(12);
+    run.gold = 999;
+    const shop = createShop(run);
+    const price = removePrice(run);
+    expect(shopRemove(run, shop, run.deck[0].uid)).toBe(true);
+    expect(run.gold).toBe(999 - price);
+    expect(shopRemove(run, shop, run.deck[0].uid)).toBe(false);
+    expect(removePrice(run)).toBeGreaterThan(price);
+  });
+
+  it('상인 조합 인장은 가격을 깎는다', () => {
+    const plain = createShop(createRun(20));
+    const run = createRun(20);
+    gainModule(run, 'guild_seal');
+    const cheap = createShop(run);
+    expect(cheap.cards.reduce((s, c) => s + c.price, 0)).toBeLessThan(plain.cards.reduce((s, c) => s + c.price, 0));
+  });
+});
+
+// ══ 사건 ══
+
+describe('사건', () => {
+  it('주화가 모자란 선택지는 고를 수 없다', () => {
+    const run = createRun(1);
+    run.gold = 10;
+    expect(chooseEvent(run, 'clocksmith', 0)).toBeNull();
+    run.gold = 40;
+    const result = chooseEvent(run, 'clocksmith', 0)!;
+    expect(run.gold).toBe(0);
+    expect(result.pick).toBe('upgrade');
+  });
+
+  it('사건으로는 쓰러지지 않는다', () => {
+    const run = createRun(1);
+    run.hp = 3;
+    chooseEvent(run, 'steam_leak', 0);
+    expect(run.hp).toBe(1);
+    expect(run.modules.length).toBe(1);
+  });
+
+  it('모든 사건의 모든 선택지를 고를 수 있다', () => {
+    for (const ev of Object.values(EVENTS))
+      ev.choices.forEach((_, i) => {
+        const run = createRun(30 + i);
+        run.gold = 200;
+        const result = chooseEvent(run, ev.id, i);
+        expect(result).not.toBeNull();
+        expect(result!.text.length).toBeGreaterThan(0);
+      });
+  });
+});
+
+// ══ 저장 ══
+
+describe('저장', () => {
+  it('런과 전투를 저장했다가 그대로 불러온다', () => {
+    const store = new Map<string, string>();
+    Object.assign(globalThis, {
+      localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) },
+    });
+    const run = createRun(77, 'stoker');
+    moveTo(run, reachableNodes(run)[0].id);
+    const combat = startRoomCombat(run);
+    saveGame(run, { kind: 'combat', combat });
+    const loaded = loadGame<{ kind: 'combat'; combat: typeof combat }>()!;
+    expect(loaded.run.deck).toEqual(run.deck);
+    expect(loaded.run.map).toEqual(run.map);
+    expect(loaded.run.rng).toBeInstanceOf(Rng);
+    expect(loaded.run.rng.state).toBe(run.rng.state);
+    // 불러온 뒤에도 같은 난수가 이어진다
+    expect(loaded.run.rng.next()).toBe(run.rng.next());
+    expect(loaded.screen.combat.hand).toEqual(combat.hand);
+    expect(loaded.screen.combat.enemies).toEqual(combat.enemies);
   });
 });
