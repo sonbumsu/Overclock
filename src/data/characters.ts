@@ -18,7 +18,7 @@ export interface CharacterDef {
     statuses?: Statuses;
     maxHeat?: number;
   };
-  /** 필살기 — SKILL_RECHARGE번의 전투마다 한 번 */
+  /** 필살기 — SKILL_RECHARGE개의 스테이지마다 한 번 */
   skill: SkillDef;
 }
 

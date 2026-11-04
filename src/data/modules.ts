@@ -31,7 +31,7 @@ export interface ModuleDef {
   maxHpOnPickup?: number;
   /** 카드 보상 선택지 추가 */
   rewardChoices?: number;
-  /** 필살기 충전에 필요한 전투 수 감소 */
+  /** 필살기 충전에 필요한 스테이지 수 감소 */
   skillRecharge?: number;
 }
 
@@ -74,7 +74,7 @@ const MODULE_LIST: ModuleDef[] = [
   { id: 'precision_lens', name: '정밀 렌즈', rarity: 'rare', tone: 'arcane',
     text: '카드 보상 선택지 +1.', rewardChoices: 1 },
   { id: 'capacitor', name: '마력 축전지', rarity: 'rare', tone: 'arcane',
-    text: '필살기가 전투 1번 더 빨리 충전된다.', skillRecharge: 1 },
+    text: '필살기가 1스테이지 더 빨리 충전된다.', skillRecharge: 1 },
 ];
 
 export const MODULES: Record<string, ModuleDef> = Object.fromEntries(MODULE_LIST.map((m) => [m.id, m]));

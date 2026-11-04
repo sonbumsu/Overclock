@@ -553,18 +553,27 @@ describe('필살기', () => {
     expect(useSkill(combat)).toBe(false);
   });
 
-  it(`쓰고 나면 전투 ${SKILL_RECHARGE}번을 마쳐야 다시 쓸 수 있다`, () => {
+  it(`쓰고 나면 스테이지 ${SKILL_RECHARGE}개를 지나야 다시 쓸 수 있다 (전투가 아닌 방도 센다)`, () => {
     const run = combatRun('engineer');
     const used = startRoomCombat(run);
     useSkill(used);
     settleSkill(run, used);
+    expect(run.skillCharge).toBe(0);
     const ready: boolean[] = [];
     for (let i = 0; i < SKILL_RECHARGE; i++) {
-      const c = startRoomCombat(run);
-      ready.push(c.skillReady);
-      settleSkill(run, c);
+      moveTo(run, reachableNodes(run)[0].id);
+      ready.push(run.skillCharge >= skillRecharge(run));
     }
-    expect(ready).toEqual([false, false, true]);
+    expect(ready).toEqual([false, false, false, false, true]);
+    const c = startCustomCombat(run, ['automaton']);
+    expect(c.skillReady).toBe(true);
+  });
+
+  it('쓰지 않은 전투는 충전을 비우지 않는다', () => {
+    const run = combatRun('engineer');
+    const c = startRoomCombat(run);
+    settleSkill(run, c);
+    expect(run.skillCharge).toBe(skillRecharge(run));
   });
 
   it('대상 지정 필살기는 적이 여럿이면 대상이 필요하다', () => {

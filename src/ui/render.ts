@@ -329,8 +329,8 @@ function skillButton(run: RunState, state: CombatState, active: boolean): string
   const pips = Array.from({ length: recharge }, (_, i) => `<i class="${state.skillReady || i < charge ? 'on' : ''}"></i>`).join('');
   const status = state.skillReady
     ? '지금 쓸 수 있습니다. [Q]'
-    : used ? `이번 전투에서 사용했습니다. 전투 ${recharge}번을 마치면 다시 충전됩니다.`
-    : `충전 중 — 전투를 ${recharge - charge}번 더 마치면 쓸 수 있습니다.`;
+    : used ? `이번 전투에서 사용했습니다. ${recharge}스테이지를 지나면 다시 충전됩니다.`
+    : `충전 중 — ${recharge - charge}스테이지 뒤에 쓸 수 있습니다.`;
   return `
     <button class="skill-btn ${state.skillReady ? 'ready' : 'charging'} ${active ? 'active' : ''} skill-${run.character}"
       data-action="skill" ${state.skillReady ? '' : 'aria-disabled="true"'} ${tip(`★ 필살기 · ${skill.name}\n${skill.text}\n\n${status}`)}>
@@ -412,7 +412,7 @@ export function renderSelect(): string {
         <p class="char-title">${c.title}</p>
         <div class="char-stats">${iconImg('heart', 2)}${c.maxHp} <span class="arch arch-${c.archetype}">${ARCHETYPES[c.archetype].name} 덱</span></div>
         <div class="char-passive"><b>${c.passive.name}</b><br>${c.passive.text}</div>
-        <div class="char-skill"><b>★ 필살기 · ${c.skill.name}</b><br>${c.skill.text}<br><small>전투 ${SKILL_RECHARGE}번마다 한 번</small></div>
+        <div class="char-skill"><b>★ 필살기 · ${c.skill.name}</b><br>${c.skill.text}<br><small>${SKILL_RECHARGE}스테이지마다 한 번</small></div>
         <p class="char-desc">${c.desc}</p>
         <div class="char-deck">${signature.map((n) => `<span>${n}</span>`).join('')}</div>
       </div>`;

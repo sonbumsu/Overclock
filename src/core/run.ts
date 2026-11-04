@@ -17,8 +17,8 @@ export const ACT_MAX_HP_BONUS = 8;
 export const MIN_DECK_SIZE = 5;
 export const START_GOLD = 60;
 
-/** 필살기를 쓰고 나면 이만큼의 전투를 지나야 다시 쓸 수 있다 (모듈로 줄어들 수 있다) */
-export const SKILL_RECHARGE = 3;
+/** 필살기를 쓰고 나면 이만큼의 스테이지(지도의 방)를 지나야 다시 쓸 수 있다 (모듈로 줄어들 수 있다) */
+export const SKILL_RECHARGE = 5;
 
 /** 캐릭터에 어울리는 카드가 보상에 나올 가중치 (나머지는 1) */
 export const FAVORED_WEIGHT = 4;
@@ -120,6 +120,8 @@ export function moveTo(run: RunState, nodeId: number): MapNode | null {
   if (!reachableNodes(run).some((n) => n.id === nodeId)) return null;
   run.node = nodeId;
   run.visited.push(nodeId);
+  // 전투든 아니든 새 스테이지에 들어설 때마다 필살기가 1씩 찬다
+  run.skillCharge = Math.min(skillRecharge(run), run.skillCharge + 1);
   return run.map[nodeId];
 }
 
@@ -178,7 +180,7 @@ export function rollModule(run: RunState, rarity?: ModuleDef['rarity'], exclude:
   return run.rng.pick(preferred.length ? preferred : free);
 }
 
-/** 필살기 충전에 필요한 전투 수 */
+/** 필살기 충전에 필요한 스테이지 수 */
 export const skillRecharge = (run: RunState): number => Math.max(1, SKILL_RECHARGE - moduleSum(run, 'skillRecharge'));
 
 // ── 전투 ──────────────────────────────────────────
@@ -219,12 +221,11 @@ export function startCustomCombat(run: RunState, enemyIds: string[]): CombatStat
 }
 
 /**
- * 전투가 끝나면 필살기 충전을 정산한다.
- * 쓴 전투를 포함해 전투를 마칠 때마다 1씩 차므로, N번째 전투에서 쓰면 N+3번째 전투에서 다시 쓸 수 있다.
+ * 전투가 끝나면 필살기 충전을 정산한다 — 썼으면 비운다.
+ * 충전은 moveTo에서 스테이지마다 1씩 차므로, N번째 스테이지에서 쓰면 N+5번째 스테이지부터 다시 쓸 수 있다.
  */
 export function settleSkill(run: RunState, combat: CombatState): void {
   if (combat.skillUsed) run.skillCharge = 0;
-  run.skillCharge = Math.min(skillRecharge(run), run.skillCharge + 1);
 }
 
 export interface CombatSpoils {

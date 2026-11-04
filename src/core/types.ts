@@ -85,7 +85,7 @@ export interface CardDef {
   upgraded?: boolean;
 }
 
-/** 캐릭터 필살기 — 증기압을 쓰지 않고, 몇 번의 전투마다 한 번 쓸 수 있다 */
+/** 캐릭터 필살기 — 증기압을 쓰지 않고, 몇 스테이지마다 한 번 쓸 수 있다 */
 export interface SkillDef {
   id: string;
   name: string;
