@@ -55,6 +55,11 @@ export const STATUS_INFO: Record<StatusId, { name: string; desc: string }> = {
   generator: { name: '뇌전', desc: '매 턴 모든 적에게 감전 N' },
   residual: { name: '잔압', desc: '압력을 소모해도 절반이 남음' },
   redline: { name: '레드존', desc: '과열이 한계의 절반 이상이면 주는 피해 +N' },
+  rewind: { name: '되감기', desc: '쓰러지면 최대 체력의 절반으로 되살아난다 (N번)' },
+  split: { name: '분열', desc: '체력이 절반 이하가 되면 남은 체력을 나눠 가진 둘로 갈라진다' },
+  reactive: { name: '반응 장갑', desc: '기관사가 카드를 쓸 때마다 방어도 +N' },
+  heatHunter: { name: '열 포식', desc: '기관사가 오버클록할 때마다 출력 +N' },
+  fuse: { name: '도화선', desc: '행동할 때마다 1씩 타들어 간다. 다 타면 다음 행동에 대폭발' },
 };
 const KEYWORDS = /(맞물림\([^)]+\)|맞물림|회전|연동|과열|소멸|부식|녹|출력|증기압|방어도|화상|산성|감전|압력|가시|기절)/g;
 

@@ -56,11 +56,7 @@ export interface CombatSetup {
 
 export function createCombat(setup: CombatSetup): CombatState {
   const { rng } = setup;
-  const enemies: EnemyState[] = setup.enemyIds.map((defId, i) => {
-    const def = ENEMIES[defId];
-    const hp = rng.int(def.hp[0], def.hp[1]);
-    return { uid: i, defId, name: def.name, hp, maxHp: hp, block: 0, statuses: {}, moveIndex: -1, nextMoveId: '' };
-  });
+  const enemies: EnemyState[] = setup.enemyIds.map((defId, i) => makeEnemy(defId, i, rng.int(ENEMIES[defId].hp[0], ENEMIES[defId].hp[1])));
   const state: CombatState = {
     player: {
       hp: setup.hp, maxHp: setup.maxHp, block: 0, statuses: { ...setup.statuses },
@@ -96,6 +92,11 @@ export function createCombat(setup: CombatSetup): CombatState {
   state.player.steam += setup.firstTurnSteam ?? 0;
   state.player.block += setup.startBlock ?? 0;
   return state;
+}
+
+function makeEnemy(defId: string, uid: number, hp: number): EnemyState {
+  const def = ENEMIES[defId];
+  return { uid, defId, name: def.name, hp, maxHp: hp, block: 0, statuses: { ...def.statuses }, moveIndex: -1, nextMoveId: '' };
 }
 
 export const cardDef = (card: CardInstance): CardDef => CARDS[card.defId];
@@ -202,8 +203,25 @@ export function playCard(state: CombatState, cardUid: number, targetUid?: number
   }
 
   if (cost.heat > 0) addHeat(state, cost.heat);
+  reactToCard(state, cost.heat > 0);
   checkOutcome(state);
   return true;
+}
+
+/** 카드를 쓴 뒤 적 기믹 — 반응 장갑, 열 포식 */
+function reactToCard(state: CombatState, overclocked: boolean): void {
+  for (const enemy of aliveEnemies(state)) {
+    const armor = enemy.statuses.reactive;
+    if (armor) {
+      enemy.block += armor;
+      state.events.push({ kind: 'block', target: enemy.uid, amount: armor });
+    }
+    const hunger = enemy.statuses.heatHunter;
+    if (hunger && overclocked) {
+      state.log.push(`${enemy.name} — 열을 삼켰다! 출력 +${hunger}`);
+      gainStatus(state, enemy.uid, enemy, 'strength', hunger);
+    }
+  }
 }
 
 export function endTurn(state: CombatState): void {
@@ -212,8 +230,10 @@ export function endTurn(state: CombatState): void {
   state.hand = [];
   tickStatuses(state.player);
 
+  // 적 방어도는 적 턴이 시작될 때 한꺼번에 사라진다 (동료가 나눠 준 방어도가 뒤 차례에 지워지지 않게)
+  for (const enemy of aliveEnemies(state)) enemy.block = 0;
   for (const enemy of aliveEnemies(state)) {
-    enemy.block = 0;
+    if (enemy.hp <= 0) continue;
     if (tickDots(state, enemy.uid, enemy)) {
       if (checkOutcome(state)) return;
       continue;
@@ -248,16 +268,21 @@ export type Intent =
 
 export function getIntents(state: CombatState, enemy: EnemyState): Intent[] {
   if (enemy.statuses.stun) return [{ kind: 'stun' }];
-  return getNextMove(enemy).effects.map((e): Intent => {
+  return getNextMove(enemy).effects.flatMap((e): Intent[] => {
     switch (e.kind) {
       case 'attack':
-        return { kind: 'attack', damage: calcDamage(enemy, state.player, e.amount), times: e.times ?? 1 };
+        return [{ kind: 'attack', damage: calcDamage(enemy, state.player, e.amount), times: e.times ?? 1 }];
       case 'block':
-        return { kind: 'block', amount: e.amount };
+      case 'blockAllies':
+        return [{ kind: 'block', amount: e.amount }];
       case 'applyStatus':
-        return e.target === 'self' ? { kind: 'buff' } : { kind: 'debuff' };
+        return [e.target === 'self' ? { kind: 'buff' } : { kind: 'debuff' }];
+      case 'buffAllies':
+        return [{ kind: 'buff' }];
       case 'addCard':
-        return { kind: 'debuff' };
+        return [{ kind: 'debuff' }];
+      case 'selfDestruct':
+        return [];
     }
   });
 }
@@ -497,8 +522,29 @@ function executeMove(state: CombatState, enemy: EnemyState): void {
         if (effect.target === 'self') gainStatus(state, enemy.uid, enemy, effect.status, effect.amount);
         else gainStatus(state, 'player', state.player, effect.status, effect.amount);
         break;
+      case 'blockAllies':
+        for (const ally of aliveEnemies(state)) {
+          ally.block += effect.amount;
+          state.events.push({ kind: 'block', target: ally.uid, amount: effect.amount });
+        }
+        break;
+      case 'buffAllies':
+        for (const ally of aliveEnemies(state)) gainStatus(state, ally.uid, ally, effect.status, effect.amount);
+        break;
+      case 'selfDestruct':
+        state.log.push(`${enemy.name} — 산산조각 났다!`);
+        state.events.push({ kind: 'gimmick', enemy: enemy.uid, text: '자폭!' });
+        delete enemy.statuses.rewind;
+        enemy.hp = 0;
+        state.events.push({ kind: 'hit', source: enemy.uid, target: enemy.uid, damage: 0, blocked: 0, hp: 0 });
+        break;
     }
     if (enemy.hp <= 0) break;
+  }
+  const fuse = enemy.statuses.fuse;
+  if (fuse) {
+    if (fuse <= 1) delete enemy.statuses.fuse;
+    else enemy.statuses.fuse = fuse - 1;
   }
 }
 
@@ -526,7 +572,43 @@ function tickStatuses(target: Combatant): void {
   }
 }
 
+/** 적 기믹 중 체력에 반응하는 것 — 되감기(쓰러지면 부활), 분열(절반 이하가 되면 둘로) */
+function enemyTriggers(state: CombatState): void {
+  for (const enemy of [...state.enemies]) {
+    if (enemy.hp <= 0 && enemy.statuses.rewind) {
+      if (enemy.statuses.rewind <= 1) delete enemy.statuses.rewind;
+      else enemy.statuses.rewind -= 1;
+      enemy.hp = Math.ceil(enemy.maxHp / 2);
+      enemy.block = 0;
+      state.log.push(`${enemy.name} — 시간이 되감긴다! 체력 ${enemy.hp}로 되살아났다`);
+      state.events.push({ kind: 'gimmick', enemy: enemy.uid, text: '되감기!' });
+      state.events.push({ kind: 'heal', target: enemy.uid, amount: enemy.hp, hp: enemy.hp });
+      continue;
+    }
+    const into = ENEMIES[enemy.defId].splitInto;
+    if (enemy.hp > 0 && enemy.statuses.split && into && enemy.hp * 2 <= enemy.maxHp) {
+      const hp = enemy.hp;
+      state.log.push(`${enemy.name} — 둘로 갈라졌다!`);
+      state.events.push({ kind: 'gimmick', enemy: enemy.uid, text: '분열!' });
+      enemy.hp = 0;
+      enemy.statuses = {};
+      state.events.push({ kind: 'hit', source: enemy.uid, target: enemy.uid, damage: 0, blocked: 0, hp: 0 });
+      for (let i = 0; i < 2; i++) {
+        const child = makeEnemy(into, state.enemies.length, hp);
+        state.enemies.push(child);
+        chooseNextMove(state, child);
+      }
+    }
+  }
+}
+
+/** 규칙 바깥에서 체력을 바꾼 뒤(개발자 패널) 기믹과 승패를 다시 판정한다 */
+export function settleCombat(state: CombatState): boolean {
+  return checkOutcome(state);
+}
+
 function checkOutcome(state: CombatState): boolean {
+  enemyTriggers(state);
   if (state.god) state.player.hp = Math.max(1, state.player.hp);
   if (state.player.hp <= 0) state.outcome = 'lost';
   else if (aliveEnemies(state).length === 0) state.outcome = 'won';

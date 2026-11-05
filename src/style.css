@@ -487,6 +487,12 @@ b { color: var(--brass-light); font-weight: normal; }
 .st-generator { color: #7ff3ff; }
 .st-residual { color: var(--steam); }
 .st-redline { color: #ff5a4d; }
+/* 적 기믹 — 눈에 띄게 테두리 */
+.st-rewind { color: #7ff3ff; box-shadow: 0 0 0 1px #7ff3ff; }
+.st-split { color: #cc7a37; box-shadow: 0 0 0 1px #cc7a37; }
+.st-reactive { color: var(--block); box-shadow: 0 0 0 1px #8fb8c9; }
+.st-fuse { color: #ffe066; box-shadow: 0 0 0 1px #f08a24; }
+.st-heatHunter { color: #ff5a4d; box-shadow: 0 0 0 1px #ff5a4d; }
 .float.acid { color: #b6f04a; }
 .float.shock { color: #7ff3ff; }
 
@@ -858,3 +864,4 @@ body.dev-open { margin-right: 360px; }
   .event-panel { flex-direction: column; }
   .shop-modules { flex-direction: column; }
 }
+.float.gimmick { color: #ffe066; font-size: 22px; }

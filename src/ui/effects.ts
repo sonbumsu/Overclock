@@ -382,6 +382,7 @@ const FAMILY_COLOR: Record<string, string> = { gear: C.brass3, steam: C.steam2, 
 const POSITIVE = new Set([
   'strength', 'flywheel', 'amplifier', 'furnace', 'compressor', 'autoloader', 'spring', 'pressure',
   'thorns', 'retain', 'heatsink', 'meltdown', 'kindling', 'acidPump', 'generator', 'residual', 'redline',
+  'rewind', 'split', 'reactive', 'heatHunter', 'fuse',
 ]);
 
 function hitFx(ev: Extract<CombatEvent, { kind: 'hit' }>): FxKind {
@@ -825,6 +826,22 @@ export async function playEvents(root: HTMLElement, events: CombatEvent[], befor
           sparks(host(el), FX_COLORS.charge, 8, 0.7);
         } else if (!positive) spawnFx(host(el), 'arcane', 3);
         await wait(140);
+        break;
+      }
+      case 'gimmick': {
+        const el = unit(ev.enemy);
+        if (!el) break;
+        floatText(el, 'gimmick', ev.text);
+        sfx(ev.text === '자폭!' ? 'breakdown' : 'buff');
+        if (ev.text === '되감기!') {
+          spawnFx(host(el), 'arcane', 5);
+          sparks(host(el), [C.cyan, C.white, C.arc3], 18, 1.2);
+        } else {
+          spawnFx(host(el), 'explosion', 5);
+          sparks(host(el), [C.heat, C.glow, C.steel2], 20, 1.4);
+          if (stage) restartClass(stage, 'quake-hard');
+        }
+        await wait(360);
         break;
       }
       case 'breakdown': {

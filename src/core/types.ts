@@ -29,12 +29,19 @@ export type Rarity = 'starter' | 'common' | 'precision' | 'masterwork';
  * generator(뇌전 발생기): 매 턴 모든 적에게 감전 N
  * residual(잔압 밸브): 압력을 소모해도 절반이 남는다
  * redline(레드존): 과열이 한계의 절반 이상이면 주는 피해 +N
+ * ── 적 기믹 ──
+ * rewind(되감기): 쓰러지면 최대 체력의 절반으로 되살아난다. N번
+ * split(분열): 체력이 절반 이하로 떨어지면 남은 체력을 나눠 가진 작은 적 둘로 갈라진다
+ * reactive(반응 장갑): 기관사가 카드를 쓸 때마다 방어도 +N
+ * heatHunter(열 포식): 기관사가 오버클록할 때마다 출력 +N
+ * fuse(도화선): 행동할 때마다 1씩 타들어 가고, 다 타면 다음 행동이 폭발이다
  */
 export type StatusId =
   | 'strength' | 'vulnerable' | 'weak' | 'burn' | 'pressure' | 'stun'
   | 'flywheel' | 'amplifier' | 'furnace' | 'compressor' | 'autoloader' | 'spring'
   | 'thorns' | 'retain' | 'heatsink' | 'meltdown' | 'kindling'
-  | 'acid' | 'shock' | 'acidPump' | 'generator' | 'residual' | 'redline';
+  | 'acid' | 'shock' | 'acidPump' | 'generator' | 'residual' | 'redline'
+  | 'rewind' | 'split' | 'reactive' | 'heatHunter' | 'fuse';
 /** 지속 피해 상태 */
 export type DotId = 'burn' | 'acid' | 'shock';
 export type Statuses = Partial<Record<StatusId, number>>;
@@ -103,7 +110,13 @@ export type EnemyEffect =
   | { kind: 'block'; amount: number }
   | { kind: 'applyStatus'; status: StatusId; amount: number; target: 'self' | 'player' }
   /** 기관사의 버린 더미에 불량 카드를 섞는다 */
-  | { kind: 'addCard'; cardId: string; count: number };
+  | { kind: 'addCard'; cardId: string; count: number }
+  /** 살아 있는 모든 적(자신 포함)에게 방어도 */
+  | { kind: 'blockAllies'; amount: number }
+  /** 살아 있는 모든 적(자신 포함)에게 상태 */
+  | { kind: 'buffAllies'; status: StatusId; amount: number }
+  /** 스스로 부서진다 (자폭) */
+  | { kind: 'selfDestruct' };
 
 export interface EnemyMove {
   id: string;
@@ -117,6 +130,10 @@ export interface EnemyDef {
   hp: [min: number, max: number];
   pattern: 'cycle' | 'random';
   moves: EnemyMove[];
+  /** 전투 시작부터 가진 상태 — 기믹 (되감기 · 분열 · 반응 장갑 · 열 포식) */
+  statuses?: Statuses;
+  /** 분열하면 나오는 적 */
+  splitInto?: string;
 }
 
 export interface Combatant {
@@ -156,7 +173,9 @@ export type CombatEvent =
   | { kind: 'stunned'; enemy: number }
   | { kind: 'heal'; target: UnitRef; amount: number; hp: number }
   | { kind: 'cardAdded'; cardId: string; count: number }
-  | { kind: 'breakdown'; damage: number; hp: number };
+  | { kind: 'breakdown'; damage: number; hp: number }
+  /** 적 기믹이 발동함 — 되감기, 분열, 자폭 등 */
+  | { kind: 'gimmick'; enemy: number; text: string };
 
 export interface CombatState {
   player: PlayerState;

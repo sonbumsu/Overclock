@@ -912,8 +912,220 @@ function heart(): Pix {
   return p.outline(OUT[2]);
 }
 
+// ── 기믹 적 ─────────────────────────────────────────
+
+/** 폭주 보일러 — 금 간 둥근 보일러, 바늘이 끝까지 꺾인 압력계, 타들어 가는 도화선 */
+function boilerBomb(): Pix {
+  const p = new Pix(44, 48);
+  // 짧은 다리
+  solid(p, cap(14, 38, 12, 45, 2.4), R.iron, BACK);
+  solid(p, cap(30, 38, 32, 45, 2.4), R.iron, BACK);
+  solid(p, and(ell(11, 46.5, 4.5, 2.2), box(0, 0, 44, 47)), R.iron);
+  solid(p, and(ell(33, 46.5, 4.5, 2.2), box(0, 0, 44, 47)), R.iron);
+  // 둥근 보일러 몸통
+  const body = ell(22, 28, 15, 13.5);
+  solid(p, body, R.copper);
+  rust(p, body, 0.35, 3);
+  solid(p, and(body, box(0, 24, 44, 3)), R.brass, { sep: false });
+  for (let x = 10; x <= 34; x += 6) rivet(p, x, 25, R.brass);
+  // 금 사이로 새는 불빛
+  const crack = [[30, 31], [32, 34], [31, 37], [34, 39]];
+  for (let i = 1; i < crack.length; i++) p.line(crack[i - 1][0], crack[i - 1][1], crack[i][0], crack[i][1], AMBER[3]);
+  halo(p, 32, 35, 6, AMBER[2], 0.45);
+  // 압력계 — 바늘이 빨간 칸까지
+  solid(p, ell(18, 31, 6, 6), R.brass, { light: [-1, -1] });
+  solid(p, ell(18, 31, 4.4, 4.4), R.dial, { sep: false });
+  for (let i = 0; i < 3; i++) p.set(20 + i, 28 + i, RED[2]);
+  p.line(18, 31, 22, 28, '#2a1a1a');
+  p.set(18, 31, R.brass[2]);
+  // 안전밸브와 도화선
+  solid(p, box(19, 11, 6, 5, 1), R.iron);
+  solid(p, box(17, 9, 10, 3, 1), R.brass);
+  const fuse = [[22, 9], [23, 6], [27, 4], [30, 5]];
+  for (let i = 1; i < fuse.length; i++) solid(p, cap(fuse[i - 1][0], fuse[i - 1][1], fuse[i][0], fuse[i][1], 0.8), R.leather, { sep: false });
+  solid(p, flameM(31, 5, 2.2, 5, 0.6), R.fire, { core: [0.5, 1, 1.8] });
+  halo(p, 31, 3, 6, R.fire[3], 0.4);
+  // 화난 눈구멍
+  eye(p, 25, 19, 3, 2, AMBER, 4);
+  eye(p, 31, 19, 3, 2, AMBER, 4);
+  p.line(24, 17, 28, 18, R.copper[0]).line(30, 18, 34, 17, R.copper[0]);
+  return p.outline(OUT[0]);
+}
+
+/** 녹 덩어리 — 녹물과 부품이 엉겨 붙은 꿈틀대는 덩어리. 작으면 녹 방울 */
+function rustMass(w: number, h: number): Pix {
+  const p = new Pix(w, h);
+  const cx = w / 2, by = h - 2;
+  const rx = w * 0.44, ry = h * 0.42;
+  const blob = or(ell(cx, by - ry, rx, ry), ell(cx - rx * 0.45, by - ry * 0.55, rx * 0.55, ry * 0.6), ell(cx + rx * 0.5, by - ry * 0.5, rx * 0.5, ry * 0.55));
+  const drip = ['#2a120a', '#5a2410', '#8f4419', '#c26a2a', '#e8a15a'] as const;
+  solid(p, and(blob, box(0, 0, w, by)), drip);
+  rust(p, blob, 0.5, w);
+  // 박힌 톱니와 볼트
+  const g = w / 46;
+  solid(p, sub(gearM(cx + rx * 0.35, by - ry * 1.2, 5 * g + 1, 7, 1.4), ell(cx + rx * 0.35, by - ry * 1.2, 1.5 * g, 1.5 * g)), R.brass);
+  solid(p, box(cx - rx * 0.7, by - ry * 0.9, 4 * g + 1, 2 * g + 1, 1), R.iron);
+  // 눈 — 녹 속에 박힌 여러 개의 붉은 점
+  eye(p, Math.round(cx - rx * 0.3), Math.round(by - ry * 1.35), Math.max(1, Math.round(2 * g)), Math.max(1, Math.round(2 * g)), RED, 3);
+  eye(p, Math.round(cx - rx * 0.05), Math.round(by - ry * 1.45), Math.max(1, Math.round(2 * g)), Math.max(1, Math.round(2 * g)), RED, 3);
+  if (w > 30) eye(p, Math.round(cx - rx * 0.55), Math.round(by - ry * 1.05), 1, 1, RED, 2);
+  // 흘러내린 녹물
+  for (const fx of [0.25, 0.6, 0.8]) {
+    const x = Math.round(w * fx);
+    for (let y = by - 1; y <= by + 1; y++) if (p.get(x, y - 1)) p.set(x, y, drip[1]);
+  }
+  return p.outline(OUT[0]);
+}
+const rustBlob = () => rustMass(46, 40);
+const rustDroplet = () => rustMass(26, 24);
+
+/** 배전 코일 — 다리 셋 달린 변압기, 위의 테슬라 구슬 사이로 튀는 전류 */
+function relayCoil(): Pix {
+  const p = new Pix(40, 56);
+  // 세발 다리
+  for (const [x0, x1, back] of [[14, 6, false], [26, 34, false], [20, 20, true]] as const)
+    solid(p, cap(x0, 44, x1, 54, 1.8), R.gunmetal, back ? BACK : {});
+  // 변압기 몸통
+  const body = box(9, 30, 22, 15, 2);
+  solid(p, body, R.steel);
+  for (let y = 32; y <= 42; y += 3) p.line(10, y, 30, y, R.steel[1]);
+  solid(p, box(14, 34, 12, 7, 1), R.gunmetal, { sep: false });
+  eye(p, 16, 36, 8, 2, CYANG, 5);
+  rivet(p, 11, 31, R.steel); rivet(p, 28, 31, R.steel);
+  // 구리 코일 기둥
+  solid(p, box(16, 12, 8, 18, 1), R.copper);
+  for (let y = 13; y <= 28; y += 2) p.line(16, y, 23, y, R.copper[1]);
+  // 테슬라 구슬
+  solid(p, ell(20, 8, 7, 6), R.steel, { light: [-1, -1] });
+  solid(p, ell(20, 8, 4, 3.5), R.cyan, { core: [0.5, 1.5, 2.5] });
+  halo(p, 20, 8, 14, CYANG[2], 0.3);
+  // 튀는 번개
+  const bolts = [[[13, 6], [9, 3], [6, 6], [2, 2]], [[27, 7], [31, 4], [33, 8], [38, 5]], [[20, 2], [19, 0]]];
+  for (const b of bolts) for (let i = 1; i < b.length; i++) p.line(b[i - 1][0], b[i - 1][1], b[i][0], b[i][1], CYANG[3]);
+  return p.outline(OUT[1]);
+}
+
+/** 증기 계측기 — 계기판이 잔뜩 붙은 판금 갑옷. 맞을수록 판이 더 덧대진다 */
+function pressureGauge(): Pix {
+  const p = new Pix(52, 60);
+  const W = p.w;
+  // 다리
+  solid(p, cap(19, 44, 17, 55, 3.6), R.gunmetal);
+  solid(p, cap(33, 44, 35, 55, 3.6), R.gunmetal, BACK);
+  solid(p, and(ell(15, 57, 6.5, 3), box(0, 0, W, 59)), R.steel);
+  solid(p, and(ell(37, 57, 6.5, 3), box(0, 0, W, 59)), R.steel, BACK);
+  // 팔 — 커다란 방패판
+  solid(p, cap(40, 26, 45, 38, 3.4), R.steel, BACK);
+  // 몸통 — 겹겹이 덧댄 판
+  const torso = box(11, 18, 30, 28, 4);
+  solid(p, torso, R.steel);
+  for (const [x, y, w, h] of [[12, 20, 13, 9], [27, 22, 13, 8], [13, 33, 26, 7]] as const) {
+    solid(p, box(x, y, w, h, 1), R.iron, { sep: true });
+    rivet(p, x + 1, y + 1, R.iron); rivet(p, x + w - 2, y + 1, R.iron);
+  }
+  // 계기판 세 개
+  for (const [x, y, r, a] of [[19, 25, 3.6, 0.6], [33, 26, 3, -0.4], [26, 37, 2.6, 1.2]] as const) {
+    solid(p, ell(x, y, r + 1, r + 1), R.brass, { light: [-1, -1] });
+    solid(p, ell(x, y, r, r), R.dial, { sep: false });
+    dial(p, x, y, r, [a, a + 2], '#2a1a1a', RED[2]);
+  }
+  // 머리 — 둥근 잠수 투구
+  solid(p, box(20, 14, 12, 5), R.gunmetal);
+  solid(p, ell(26, 9, 9, 8), R.brass);
+  solid(p, ell(26, 10, 5.5, 4.6), R.gunmetal, { sep: false });
+  eye(p, 23, 9, 2, 2, CYANG, 4);
+  eye(p, 28, 9, 2, 2, CYANG, 4);
+  for (const [x, y] of [[18, 9], [34, 9], [26, 2]]) rivet(p, x, y, R.brass);
+  // 앞쪽 방패
+  const shield = box(1, 24, 13, 22, 3);
+  solid(p, shield, R.steel, { light: [-1, -0.4] });
+  solid(p, box(3, 27, 9, 16, 2), R.iron, { sep: false });
+  solid(p, ell(7.5, 35, 2.6, 2.6), R.brass);
+  // 증기 배출구
+  solid(p, or(ell(44, 15, 3, 2.2), ell(47, 12, 2.4, 1.8)), R.steam, { sep: false });
+  return p.outline(OUT[1]);
+}
+
+/** 역행 인형 — 금 간 도자기 얼굴, 등에 거꾸로 도는 시계, 실에 매달린 팔다리 */
+function rewinder(): Pix {
+  const p = new Pix(48, 62);
+  // 등 뒤 시계 — 바늘이 거꾸로
+  solid(p, ell(30, 20, 13, 13), R.arcIron, BACK);
+  solid(p, ell(30, 20, 10.5, 10.5), R.dial, { ...BACK, sep: false });
+  dial(p, 30, 20, 10, [-0.9, -2.6], '#2a1a3a', R.cyan[1]);
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    p.set(Math.round(30 + Math.cos(a) * 9), Math.round(20 + Math.sin(a) * 9), R.arcIron[1]);
+  }
+  // 역회전 화살표
+  p.line(41, 9, 44, 12, R.cyan[2]).line(44, 12, 44, 8, R.cyan[2]);
+  // 실
+  for (const x of [14, 22, 34]) p.line(x, 0, x, 6, '#cdc1d6');
+  // 다리
+  solid(p, cap(19, 44, 17, 57, 2.2), R.arc);
+  solid(p, cap(27, 44, 30, 57, 2.2), R.arc, BACK);
+  solid(p, ell(16, 58.5, 3.4, 2), R.arcIron);
+  solid(p, ell(31, 58.5, 3.4, 2), R.arcIron, BACK);
+  // 옷 — 치마 같은 판
+  solid(p, poly([[15, 28], [29, 28], [34, 46], [10, 46]]), R.arc, { light: [-0.8, -0.5] });
+  for (const x of [15, 20, 25, 30]) p.line(x, 33, x - 1, 45, R.arc[1]);
+  solid(p, box(14, 26, 16, 4, 1), R.brass);
+  // 팔 — 실에 들린 자세
+  solid(p, cap(15, 29, 9, 20, 1.8), R.bone);
+  solid(p, cap(9, 20, 13, 9, 1.6), R.bone);
+  solid(p, cap(29, 29, 37, 34, 1.8), R.bone, BACK);
+  // 얼굴 — 금 간 도자기
+  const face = ell(22, 17, 8, 9);
+  solid(p, face, R.bone, { light: [-1, -0.8] });
+  p.line(25, 10, 23, 15, R.bone[0]).line(23, 15, 26, 19, R.bone[0]);
+  eye(p, 18, 16, 2, 2, CYANG, 3);
+  eye(p, 24, 16, 2, 2, CYANG, 3);
+  p.line(19, 22, 24, 22, R.bone[0]);
+  solid(p, or(ell(15, 9, 4, 3), ell(29, 9, 4, 3)), R.arc);
+  return p.outline(OUT[2]);
+}
+
+/** 열 포식자 — 불을 빨아들이는 깔때기 입, 등에 달아오른 방열판 */
+function heatEater(): Pix {
+  const p = new Pix(60, 58);
+  const W = p.w;
+  // 방열판 — 등 뒤로 줄지어 달아오른다
+  for (let i = 0; i < 5; i++) {
+    const x = 30 + i * 5;
+    solid(p, box(x, 6 + i * 2, 3, 22 - i * 2, 1), i < 2 ? R.fire : R.copper, i < 2 ? { core: [0.5, 1] } : BACK);
+  }
+  halo(p, 34, 14, 10, R.fire[2], 0.3);
+  // 다리
+  solid(p, cap(22, 44, 18, 54, 3.4), R.arcIron);
+  solid(p, cap(40, 44, 44, 54, 3.4), R.arcIron, BACK);
+  solid(p, and(ell(16, 55.5, 6, 2.6), box(0, 0, W, 57)), R.arcIron);
+  solid(p, and(ell(46, 55.5, 6, 2.6), box(0, 0, W, 57)), R.arcIron, BACK);
+  // 몸통
+  const body = ell(32, 34, 17, 13);
+  solid(p, body, R.arcIron);
+  solid(p, and(body, box(0, 38, W, 3)), R.brass, { sep: false });
+  for (let x = 20; x <= 44; x += 6) rivet(p, x, 38, R.brass);
+  // 배 속 용광로 — 삼킨 열이 보인다
+  solid(p, ell(33, 31, 7, 5.5), R.gunmetal);
+  solid(p, ell(33, 31.5, 5, 3.8), R.fire, { core: [1, 2, 3] });
+  for (let x = 29; x <= 37; x += 2) p.rect(x, 27, 1, 9, R.gunmetal[1]);
+  halo(p, 33, 31.5, 9, R.fire[2], 0.35);
+  // 깔때기 머리
+  const funnel = poly([[2, 10], [20, 18], [20, 30], [2, 36]]);
+  solid(p, funnel, R.copper, { light: [-1, -0.3] });
+  solid(p, poly([[4, 14], [16, 20], [16, 28], [4, 32]]), ['#100604', '#2a0d06', '#5a1a0a', '#8a2a10'], { sep: false });
+  // 빨려 드는 불티
+  for (const [x, y] of [[1, 22], [3, 18], [5, 27], [2, 30]]) p.set(x, y, R.fire[3]);
+  eye(p, 21, 16, 3, 2, VIOLET, 4);
+  eye(p, 21, 21, 2, 2, VIOLET, 3);
+  return p.outline(OUT[2]);
+}
+
 export const ENEMY_SPRITES: Record<string, () => Pix> = {
   automaton, spider, rat, guard, warden,
   golem, bat, imp, steam_knight: steamKnight, colossus,
   puppet, wraith, sentinel, heart,
+  boiler_bomb: boilerBomb, rust_blob: rustBlob, rust_droplet: rustDroplet,
+  relay_coil: relayCoil, pressure_gauge: pressureGauge,
+  rewinder, heat_eater: heatEater,
 };

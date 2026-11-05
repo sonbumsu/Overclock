@@ -875,3 +875,69 @@ describe('저장', () => {
     expect(loaded.screen.combat.enemies).toEqual(combat.enemies);
   });
 });
+
+describe('기믹 적', () => {
+  it('폭주 보일러는 도화선 셋이 지나면 터지고 스스로 부서진다', () => {
+    const state = setup([], ['boiler_bomb', 'automaton']);
+    const hp = state.player.hp;
+    expect(state.enemies[0].statuses.fuse).toBe(3);
+    for (let i = 0; i < 3; i++) endTurn(state);
+    expect(state.enemies[0].statuses.fuse).toBeUndefined();
+    expect(state.enemies[0].nextMoveId).toBe('boom');
+    state.player.block = 0;
+    endTurn(state);
+    expect(state.enemies[0].hp).toBe(0);
+    expect(state.player.hp).toBeLessThanOrEqual(hp - 26);
+    expect(state.events.some((e) => e.kind === 'gimmick' && e.text === '자폭!')).toBe(true);
+  });
+
+  it('녹 덩어리는 체력이 절반 이하가 되면 남은 체력을 가진 녹 방울 둘로 갈라진다', () => {
+    const state = setup(['cog_strike'], ['rust_blob']);
+    const blob = state.enemies[0];
+    blob.hp = Math.floor(blob.maxHp / 2) + 3;
+    playCard(state, 100, 0);
+    expect(blob.hp).toBe(0);
+    expect(state.outcome).toBe('ongoing');
+    const drops = state.enemies.filter((e) => e.defId === 'rust_droplet');
+    expect(drops).toHaveLength(2);
+    expect(drops[0].hp).toBe(drops[0].maxHp);
+    expect(drops[0].hp).toBeLessThanOrEqual(blob.maxHp / 2);
+    expect(drops.map((d) => d.uid)).toEqual([1, 2]);
+  });
+
+  it('역행 인형은 한 번 되살아나고, 두 번째에는 쓰러진다', () => {
+    const state = setup(['cog_strike', 'cog_strike'], ['rewinder']);
+    const doll = state.enemies[0];
+    doll.hp = 1;
+    playCard(state, 100, 0);
+    expect(doll.hp).toBe(Math.ceil(doll.maxHp / 2));
+    expect(doll.statuses.rewind).toBeUndefined();
+    expect(state.outcome).toBe('ongoing');
+    doll.hp = 1;
+    playCard(state, 101, 0);
+    expect(state.outcome).toBe('won');
+  });
+
+  it('증기 계측기는 카드를 쓸 때마다 방어도를 얻는다', () => {
+    const state = setup(['brass_guard', 'brass_guard'], ['pressure_gauge']);
+    playCard(state, 100);
+    playCard(state, 101);
+    expect(state.enemies[0].block).toBe(4);
+  });
+
+  it('열 포식자는 오버클록할 때만 출력을 얻는다', () => {
+    const state = setup(['brass_guard', 'brass_guard', 'brass_guard', 'brass_guard'], ['heat_eater']);
+    for (let i = 0; i < 3; i++) playCard(state, 100 + i);
+    expect(state.enemies[0].statuses.strength).toBeUndefined();
+    playCard(state, 103);
+    expect(state.enemies[0].statuses.strength).toBe(3);
+  });
+
+  it('배전 코일은 모든 동료에게 방어도와 출력을 나눠 준다', () => {
+    const state = setup([], ['relay_coil', 'automaton']);
+    endTurn(state);
+    expect(state.enemies.every((e) => e.block === 9)).toBe(true);
+    endTurn(state);
+    expect(state.enemies.every((e) => e.statuses.strength === 2)).toBe(true);
+  });
+});

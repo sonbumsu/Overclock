@@ -2,7 +2,7 @@
 // 개발 서버(또는 ?dev)에서만 실린다. ` 또는 F2로 연다.
 // 게임 화면(#app) 바깥에 붙여서, 게임이 화면을 다시 그려도 패널은 그대로 남는다.
 
-import { aliveEnemies } from '../core/combat';
+import { aliveEnemies, settleCombat } from '../core/combat';
 import { addCard, currentNode, gainModule, runCharacter, skillRecharge, type RunState } from '../core/run';
 import type { CombatEvent, CombatState, StatusId } from '../core/types';
 import { ACTS } from '../data/acts';
@@ -582,8 +582,9 @@ function onClick(ev: MouseEvent): void {
 }
 
 /** 적 체력을 직접 깎았을 때 승패를 확정한다 */
+/** 기믹(분열 · 되감기)까지 반영해 승패를 정한다 */
 function finishIfDone(c: CombatState): void {
-  if (aliveEnemies(c).length === 0) c.outcome = 'won';
+  settleCombat(c);
 }
 
 function fxHost(): HTMLElement | null {
